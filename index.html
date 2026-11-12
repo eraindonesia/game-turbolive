@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TurboTap Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Epilogue:wght@600;700;800&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0..1,0&display=block" rel="stylesheet">
+<meta name="description" content="TurboTap Live — game balap interaktif real-time untuk TikTok Live.">
+<meta name="theme-color" content="#0e0533">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%232D7DFF'/%3E%3Cpath d='M13 2 4 14h6l-1 8 9-12h-6z' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://script.google.com">
+<link rel="dns-prefetch" href="https://script.googleusercontent.com">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- Sprite SVG: mobil (menghadap kanan) & logo -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="svg-car" viewBox="0 0 120 50">
+    <path d="M8 24 L3 11 L19 11 L17 24 Z" fill="currentColor" opacity=".75"/>
+    <path d="M6 35 L20 25 L44 20 L76 20 L100 27 L115 35 L115 39 L6 39 Z" fill="currentColor"/>
+    <path d="M38 22 L50 10 L74 10 L87 22 Z" fill="#0e0533" opacity=".88"/>
+    <circle cx="30" cy="39" r="9.5" fill="#0e0533"/><circle cx="30" cy="39" r="4.5" fill="currentColor"/>
+    <circle cx="93" cy="39" r="9.5" fill="#0e0533"/><circle cx="93" cy="39" r="4.5" fill="currentColor"/>
+  </symbol>
+  <symbol id="svg-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6z" fill="#fff"/></symbol>
+</svg>
+
+<div id="boot"><div><div class="spinner" role="status"></div><div class="caps muted">Memuat TurboTap Live…</div></div></div>
+
+<div id="app">
+  <!-- ═════════ SIDEBAR (desktop/tablet) ═════════ -->
+  <aside id="sidebar" aria-label="Navigasi utama">
+    <div class="col gap16">
+      <div class="brand">
+        <div class="brand-mark"><svg><use href="#svg-bolt"/></svg></div>
+        <div><div class="brand-name">TurboTap</div><div class="brand-sub">Live Control Deck</div></div>
+      </div>
+      <div class="side-card">
+        <div class="row between"><span class="caps-xs muted">TikTok Live</span><span class="caps-xs t-secondary" id="side-host">@—</span></div>
+        <div class="row between">
+          <div class="row gap8"><span class="led warn pulse" id="side-led"></span><span class="caps" id="side-live">Belum tersambung</span></div>
+          <span class="caps-xs faint" id="side-src">—</span>
+        </div>
+      </div>
+      <nav id="nav">
+        <button class="nav-item active" data-view="arena"><span class="ms">fullscreen</span><span>Arena Siaran</span></button>
+        <button class="nav-item" data-view="race"><span class="ms">sports_score</span><span>Kontrol Balapan</span><span class="ms lock">lock</span></button>
+        <button class="nav-item" data-view="boost"><span class="ms">bolt</span><span>Pengaturan Boost</span><span class="ms lock">lock</span></button>
+        <button class="nav-item" data-view="game"><span class="ms">tune</span><span>Pengaturan Game</span><span class="ms lock">lock</span></button>
+        <button class="nav-item" data-view="riwayat"><span class="ms">leaderboard</span><span>Riwayat &amp; Laporan</span></button>
+      </nav>
+    </div>
+    <div class="side-bottom">
+      <div class="side-card">
+        <div class="row between"><span class="caps-xs muted">Sesi Balapan</span><span class="pill y" id="side-sesi-pill">Menunggu</span></div>
+        <div class="muted" id="side-sesi-info">Sesi #1</div>
+      </div>
+      <button class="btn btn-nitro btn-block" id="btn-emergency"><span class="ms">e911_emergency</span><span>Emergency Stop</span></button>
+    </div>
+  </aside>
+
+  <div id="main">
+    <header id="topbar">
+      <div class="row gap8 wrap">
+        <span class="chip"><span class="ms t-secondary">speed</span><span id="chip-fps">Engine: — FPS</span></span>
+        <span class="chip hide-m"><span class="ms t-primary">cloud_sync</span><span id="chip-sync">Sync: —</span></span>
+      </div>
+      <div class="row gap8">
+        <button class="btn btn-sm btn-ghost" id="btn-obs" title="Tampilan bersih untuk OBS / TikTok Live Studio"><span class="ms">cast</span><span class="hide-m">Mode Siaran</span></button>
+        <button class="btn btn-icon btn-ghost" id="btn-theme" aria-label="Ganti tema terang/gelap"><span class="ms" id="theme-ico">light_mode</span></button>
+        <button class="btn btn-sm" id="btn-auth"><span class="ms" id="auth-ico">lock</span><span id="auth-txt">Masuk Admin</span></button>
+      </div>
+    </header>
+
+    <main>
+      <!-- ═════════ 1. ARENA ═════════ -->
+      <section id="v-arena" class="view active" aria-label="Arena siaran">
+        <div id="arena-race">
+          <div class="arena-hud">
+            <div class="row gap12 wrap">
+              <span class="hud-brand">TurboTap</span>
+              <span class="pill b" id="hud-sesi">ARENA #1</span>
+            </div>
+            <div class="row gap12 wrap">
+              <span class="hud-status wait" id="hud-status"><span class="led warn" id="hud-led"></span><span id="hud-status-txt">Menunggu pemain</span></span>
+              <span class="hud-timer num" id="hud-timer">00:00</span>
+            </div>
+            <div class="row gap8 wrap">
+              <div class="hud-stat"><span class="ms t-primary">directions_car</span><div><span class="caps-xs faint">Grid</span><b id="hud-grid">0</b></div></div>
+              <div class="hud-stat"><span class="ms t-secondary">touch_app</span><div><span class="caps-xs faint">Tap/menit</span><b id="hud-pace">0</b></div></div>
+              <div class="hud-stat"><span class="ms t-tertiary">redeem</span><div><span class="caps-xs faint">Boost gift</span><b id="hud-gift">0</b></div></div>
+            </div>
+          </div>
+
+          <div class="arena-grid">
+            <div class="stage">
+              <div class="stage-head">
+                <div class="row gap8"><span class="led warn pulse"></span><span class="caps t-secondary" id="stage-title">LINTASAN 1.000 M</span></div>
+                <button class="btn btn-sm btn-ghost no-obs" id="btn-obs2"><span class="ms">cast</span>Mode Siaran</button>
+              </div>
+              <div class="track" id="track">
+                <div class="start-line"></div>
+                <div class="finish-line"></div><span class="finish-tag" id="finish-tag">FINISH 1.000M</span>
+                <div id="lanes" style="position:absolute;inset:4px 0;display:flex;flex-direction:column;"></div>
+              </div>
+              <div class="minimap" id="minimap" aria-hidden="true"></div>
+              <div class="stage-foot caps-xs">
+                <span id="foot-msg">Penonton: tap layar untuk dapat mobil</span>
+                <span>Estimasi finis <b class="t-secondary num" id="foot-eta">—</b></span>
+              </div>
+              <div class="stage-overlay" id="stage-overlay"><div id="overlay-content"></div></div>
+            </div>
+
+            <aside class="board" aria-label="Papan peringkat langsung">
+              <div class="row between">
+                <div class="row gap8"><span class="ms t-secondary" style="font-size:28px">emoji_events</span>
+                  <div><div class="h-md t-secondary" style="text-transform:uppercase">Top Racers</div><div class="caps-xs faint">Peringkat langsung</div></div></div>
+                <span class="pill y">Live</span>
+              </div>
+              <div class="col gap8" id="board-list"></div>
+              <div class="ticker">
+                <div class="row between caps-xs"><span class="faint">Ticker boost</span><span class="t-secondary" id="tk-state">—</span></div>
+                <div class="truncate" id="ticker" style="margin-top:4px">Belum ada gift.</div>
+              </div>
+            </aside>
+          </div>
+
+          <div class="cta">
+            <div class="row gap12">
+              <span class="ico-box" style="background:#00275f;color:#fff"><span class="ms fill" style="font-size:28px">touch_app</span></span>
+              <div><h3 id="cta-title">Tap layar 100x untuk dapat mobil!</h3>
+                <p id="cta-sub">Tap terus untuk gas maksimal · kirim gift untuk nitro instan</p></div>
+            </div>
+            <div class="cta-join">
+              <div><div class="caps-xs t-secondary">Baru masuk grid</div><b id="cta-join-name">—</b></div>
+              <div class="col gap4"><span class="pill y num" id="cta-join-cnt">0 pemain</span><div class="ticket-bar"><i id="cta-join-bar"></i></div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Layar pemenang -->
+        <div id="arena-podium" hidden>
+          <div class="podium-wrap">
+            <canvas id="confetti"></canvas>
+            <div class="row between wrap" style="position:relative;z-index:2;gap:8px">
+              <div class="row gap8"><span class="pill r">Selesai · Resmi</span><b class="h-sm t-secondary" id="pd-sesi">RACE #1</b><span class="num muted" id="pd-time">—</span></div>
+              <div class="row gap12 num"><span class="t-primary"><span class="ms">touch_app</span> <b id="pd-taps">0</b> tap</span><span class="t-secondary"><span class="ms">card_giftcard</span> <b id="pd-gifts">0</b> koin</span></div>
+            </div>
+            <h2 class="podium-title">Podium Juara</h2>
+            <div class="podium-grid">
+              <div class="side-cards" id="pd-left"></div>
+              <div class="steps" id="pd-steps"></div>
+              <div class="side-cards">
+                <div class="mini-card"><div class="row between"><span class="caps t-secondary">Peringkat 4 – 8</span><span class="caps-xs faint">Selisih</span></div><div class="col gap8" id="pd-runners" style="margin-top:8px"></div></div>
+              </div>
+            </div>
+            <div class="next-bar"><div>
+              <div class="row gap12"><span class="pill r">Race berikutnya</span><span class="countdown num" id="pd-count">00:20</span></div>
+              <b class="h-sm" id="pd-cta" style="text-transform:uppercase">Tap layar untuk booking mobil di race berikutnya!</b>
+              <div class="row gap8 no-obs"><button class="btn btn-sm" id="btn-pd-now"><span class="ms">skip_next</span>Mulai sekarang</button><button class="btn btn-sm btn-gold" id="btn-pd-confetti"><span class="ms">celebration</span>Konfeti</button></div>
+            </div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═════════ 2. KONTROL BALAPAN ═════════ -->
+      <section id="v-race" class="view" aria-label="Kontrol balapan">
+        <div class="warn-banner" id="rc-warn" hidden><span class="ms t-tertiary">wifi_off</span><div><b>Koneksi TikTok Live terputus.</b> <span class="muted">Arena tetap berjalan; sambungkan ulang konektor atau pakai Simulator.</span></div></div>
+        <div class="card row between wrap gap12" style="margin-bottom:16px">
+          <div class="row gap12 wrap">
+            <span class="chip"><span class="led warn" id="rc-led"></span>TikTok Live: <b id="rc-conn">Belum tersambung</b></span>
+            <span class="chip" id="rc-sesi">Sesi #1: <b id="rc-sesi-st">Menunggu</b></span>
+          </div>
+          <div class="row gap8"><span class="ms t-secondary">timer</span><span class="caps-xs faint">Berlalu</span><b class="h-md t-secondary num" id="rc-elapsed">00:00.0</b></div>
+        </div>
+        <div class="card ctrl-deck" style="margin-bottom:16px">
+          <div class="row gap8 wrap">
+            <button class="btn btn-success" id="btn-start" style="min-height:48px"><span class="ms fill">play_arrow</span>Mulai</button>
+            <button class="btn btn-gold" id="btn-pause" style="min-height:48px"><span class="ms">pause</span>Jeda</button>
+            <button class="btn btn-nitro" id="btn-stop" style="min-height:48px"><span class="ms fill">stop</span>Hentikan</button>
+            <button class="btn" id="btn-reset" style="min-height:48px"><span class="ms">replay</span>Reset sesi</button>
+          </div>
+          <button class="btn" id="btn-clear" style="min-height:48px;color:var(--tertiary)"><span class="ms">warning</span>Kosongkan lintasan</button>
+        </div>
+        <div class="grid g4" style="margin-bottom:16px">
+          <div class="stat"><div class="row between"><span class="caps muted">Pembalap aktif</span><span class="ms t-primary">directions_car</span></div><div class="stat-val num" id="st-cars">0 <small>mobil</small></div><div class="caps-xs t-success" id="st-cars-sub">antrean 0</div></div>
+          <div class="stat"><div class="row between"><span class="caps muted">Kecepatan tap</span><span class="ms t-secondary">speed</span></div><div class="stat-val t-secondary num" id="st-pace">0 <small>tap/mnt</small></div><div class="caps-xs faint" id="st-pace-sub">puncak 0</div></div>
+          <div class="stat"><div class="row between"><span class="caps muted">Nitro terpicu</span><span class="ms t-tertiary">bolt</span></div><div class="stat-val t-tertiary num" id="st-gift">0 <small>kali</small></div><div class="caps-xs faint truncate" id="st-gift-sub">belum ada gift</div></div>
+          <div class="stat"><div class="row between"><span class="caps muted">Penonton aktif</span><span class="ms t-success">visibility</span></div><div class="stat-val t-success num" id="st-viewers">0 <small>orang</small></div><div class="caps-xs faint" id="st-viewers-sub">tiket terpenuhi 0%</div></div>
+        </div>
+        <div class="grid g-main">
+          <div class="col gap16">
+            <div class="card">
+              <div class="row between wrap" style="margin-bottom:12px"><div class="row gap8"><span class="ms t-secondary">radar</span><span class="h-sm">Telemetri Lintasan</span></div><div class="caps-xs faint">Pemimpin: <b class="t-success num" id="rc-leader">—</b></div></div>
+              <div id="rc-lanes"></div>
+              <div class="panel-inset row between wrap gap8" style="margin-top:8px"><span class="caps t-secondary" id="rc-leader-txt">Belum ada pembalap</span><span class="muted" id="rc-gap"></span></div>
+            </div>
+            <div class="card">
+              <div class="row between wrap" style="margin-bottom:12px"><div class="row gap8"><span class="ms t-tertiary">flash_on</span><span class="h-sm">Boost Cepat Host</span></div><span class="caps-xs faint">Kewenangan: Admin</span></div>
+              <div class="grid g3">
+                <button class="btn quick-btn" id="qb-all"><span class="ico-box" style="width:32px;height:32px"><span class="ms">bolt</span></span><span class="caps">+20% semua pembalap</span><span class="help">Lonjakan sesaat untuk klimaks live.</span></button>
+                <button class="btn quick-btn" id="qb-pack"><span class="ico-box y" style="width:32px;height:32px"><span class="ms">compress</span></span><span class="caps">Rapatkan barisan</span><span class="help">Percepat pembalap di belakang.</span></button>
+                <button class="btn btn-nitro quick-btn" id="qb-frenzy"><span class="ico-box r" style="width:32px;height:32px;background:#590800;color:#ffb4a5"><span class="ms">whatshot</span></span><span class="caps">Nitro Frenzy 15 dtk</span><span class="help" style="color:#fff">Boost gift berlipat 2×.</span></button>
+              </div>
+            </div>
+          </div>
+          <div class="col gap16">
+            <div class="card">
+              <div class="row between" style="margin-bottom:10px"><div class="row gap8"><span class="ms t-primary">rss_feed</span><span class="h-sm">Feed Event Langsung</span></div><span class="pill g">Auto</span></div>
+              <div class="feed" id="feed"><div class="empty">Menunggu event…</div></div>
+            </div>
+            <div class="card">
+              <div class="row between" style="margin-bottom:8px"><span class="caps muted">Pipeline &amp; Sinkronisasi</span><span class="pill g" id="mon-health">Sehat</span></div>
+              <div class="panel-inset mono">
+                <div class="kv"><span class="faint">Sinkron Sheets</span><b id="mon-sync">—</b></div>
+                <div class="kv"><span class="faint">Antrean paket</span><b id="mon-queue">0</b></div>
+                <div class="kv"><span class="faint">Latensi server</span><b id="mon-latency">—</b></div>
+                <div class="kv"><span class="faint">Log_Event di server</span><b id="mon-log">—</b></div>
+              </div>
+              <div class="row gap8 wrap" style="margin-top:10px"><button class="btn btn-sm" id="btn-ping"><span class="ms">wifi_find</span>Uji ping</button><button class="btn btn-sm" id="btn-flush"><span class="ms">cloud_upload</span>Kirim sekarang</button></div>
+            </div>
+            <div class="card row gap12" style="padding:10px 14px"><div><div class="caps-xs faint">Mulai otomatis</div><div style="font-size:12px" class="muted">Sesi berikutnya jalan sendiri bila ≥2 mobil</div></div><button class="switch" id="auto-toggle" role="switch" aria-checked="false" aria-label="Mulai sesi berikutnya otomatis"></button></div>
+            <div class="card">
+              <div class="row between" style="margin-bottom:10px"><div class="row gap8"><span class="ms t-secondary">smart_toy</span><span class="h-sm">Simulator Penonton</span></div><button class="switch" id="sim-toggle" role="switch" aria-checked="false" aria-label="Aktifkan simulator"></button></div>
+              <p class="help" style="margin:0 0 10px">Untuk uji coba tanpa live. Penonton palsu mengirim tap &amp; gift acak.</p>
+              <div class="field"><label>Jumlah penonton: <span id="sim-count-v" class="t-secondary num">30</span></label><input type="range" id="sim-count" min="5" max="200" value="30"></div>
+              <div class="field"><label>Frekuensi gift: <span id="sim-gift-v" class="t-secondary num">sedang</span></label><input type="range" id="sim-gift" min="0" max="10" value="4"></div>
+            </div>
+            <div class="card">
+              <div class="row gap8" style="margin-bottom:8px"><span class="ms t-primary">hub</span><span class="h-sm">Konektor TikTok Live</span></div>
+              <p class="help" style="margin:0 0 10px">Jalankan <code>konektor/konektor.js</code> di PC Host, lalu sambungkan di sini.</p>
+              <div class="row gap8"><input class="input num" id="ws-url" value="ws://localhost:8765" aria-label="Alamat WebSocket konektor"><button class="btn btn-primary" id="btn-ws"><span class="ms">link</span>Sambung</button></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═════════ 3. PENGATURAN BOOST ═════════ -->
+      <section id="v-boost" class="view" aria-label="Pengaturan boost">
+        <div class="page-head">
+          <div><div class="crumb">Boost Engine</div><h1 class="h-xl">Pengaturan Boost &amp; Nitro Gift</h1>
+            <p class="muted" style="margin:6px 0 0;max-width:640px">Atur kecepatan tambahan dan durasi nitro tiap jenis gift tanpa mengubah kode. Nama gift boleh berisi alias dipisah <code>|</code>, misalnya <code>Rose|Mawar</code>.</p></div>
+          <div class="row gap12 wrap">
+            <div class="card row gap12" style="padding:10px 14px"><div><div class="caps-xs faint">Terapkan ke sesi aktif</div><div style="font-size:12px" class="muted">Jika mati, berlaku di sesi berikutnya</div></div><button class="switch" role="switch" aria-checked="false" data-cfg="terapkan_langsung" aria-label="Terapkan langsung ke sesi aktif"></button></div>
+            <button class="btn btn-primary" id="btn-add-boost" style="min-height:48px"><span class="ms">add_circle</span>Tambah gift</button>
+          </div>
+        </div>
+        <div class="card row between wrap gap12" style="margin-bottom:16px;padding:14px">
+          <div class="row gap12 wrap grow">
+            <div style="position:relative;min-width:240px;flex:1;max-width:340px"><span class="ms faint" style="position:absolute;left:12px;top:12px">search</span><input class="input" id="boost-q" placeholder="Cari nama gift…" style="padding-left:40px" aria-label="Cari gift"></div>
+            <div class="seg" id="boost-filter"><button data-f="all" aria-pressed="true">Semua</button><button data-f="murah" aria-pressed="false">1–10 koin</button><button data-f="menengah" aria-pressed="false">11–999</button><button data-f="sultan" aria-pressed="false">≥1.000</button></div>
+          </div>
+          <div class="row gap8 wrap"><span class="caps-xs faint"><span class="ms" style="font-size:15px">tune</span> Preset:</span>
+            <button class="chip-btn" id="preset-santai">Santai</button><button class="chip-btn" id="preset-kompetitif">Kompetitif</button><button class="chip-btn" id="preset-hype" style="color:var(--tertiary)">Hype bar-bar</button></div>
+        </div>
+        <div class="grid g-main-b" style="align-items:start">
+          <div class="col gap16">
+            <div class="tbl-wrap">
+              <div class="row between" style="padding:14px 18px;background:var(--bg-deep)"><div class="row gap8"><span class="ms t-secondary">format_list_bulleted</span><span class="h-sm">Matriks Pengali Nitro</span></div><span class="pill y" id="boost-count">0 gift</span></div>
+              <table class="tbl"><thead><tr><th>Gift TikTok</th><th>Koin</th><th>Boost</th><th>Durasi</th><th>Setara</th><th>Efek</th><th>Aktif</th><th class="r">Aksi</th></tr></thead><tbody id="boost-tbody"></tbody></table>
+              <div class="row between" style="padding:10px 18px;background:var(--bg-lowest)"><span class="help" id="boost-foot">—</span><span class="caps-xs t-primary" id="boost-save-state"><span class="ms" style="font-size:14px">sync</span> Tersimpan</span></div>
+            </div>
+            <div class="card">
+              <div class="row between wrap" style="margin-bottom:12px"><div class="row gap8"><span class="ms t-secondary">verified</span><div><div class="h-sm">Indeks Keseimbangan Nitro</div><div class="help">Dihitung dari data tabel: seberapa jauh gift terkuat membawa mobil dibanding panjang lintasan.</div></div></div><span class="pill y num" id="bal-score">—</span></div>
+              <div class="grid g3">
+                <div class="panel-inset"><div class="caps-xs faint">Jarak nitro terkuat</div><div class="h-md t-primary num" id="bal-1">—</div><div class="balance"><i id="bal-1b" style="background:var(--primary)"></i></div><div class="help" id="bal-1t"></div></div>
+                <div class="panel-inset"><div class="caps-xs faint">Setara tap (terkuat)</div><div class="h-md t-secondary num" id="bal-2">—</div><div class="balance"><i id="bal-2b" style="background:var(--secondary)"></i></div><div class="help" id="bal-2t"></div></div>
+                <div class="panel-inset"><div class="caps-xs faint">Batas kecepatan total</div><div class="h-md t-tertiary num" id="bal-3">—</div><div class="balance"><i id="bal-3b" style="background:var(--tertiary)"></i></div><div class="help" id="bal-3t"></div></div>
+              </div>
+            </div>
+          </div>
+          <div class="card editor" id="be-card">
+            <div class="card-head"><div class="card-title"><span class="ico-box"><span class="ms">tune</span></span><div><div class="caps-xs t-primary">Editor langsung</div><div class="h-sm" id="be-title">Pilih gift</div></div></div><button class="btn btn-icon btn-ghost" id="be-close" aria-label="Tutup editor"><span class="ms">close</span></button></div>
+            <div class="col gap16" id="be-form">
+              <div class="field"><label for="be-nama">Nama gift TikTok</label><input class="input" id="be-nama" maxlength="80" placeholder="Contoh: Rose|Mawar"><span class="err" id="be-nama-e"></span></div>
+              <div class="field"><label for="be-koin">Nilai koin</label><input class="input num" id="be-koin" type="number" min="0" max="1000000" step="1"></div>
+              <div class="panel-inset"><div class="row between"><label class="lbl" for="be-speed">Tambahan kecepatan</label><b class="h-md t-secondary num" id="be-speed-v">+0 km/h</b></div><input type="range" id="be-speed" min="5" max="250" step="5"><div class="row between faint caps-xs"><span>+5</span><span>+130</span><span>+250</span></div></div>
+              <div class="panel-inset"><div class="row between"><label class="lbl" for="be-dur">Durasi nitro</label><b class="h-md t-secondary num" id="be-dur-v">0 dtk</b></div><input type="range" id="be-dur" min="1" max="60" step="1"></div>
+              <div class="field"><span class="lbl">Efek partikel</span><div class="grid g2" id="be-fx"></div></div>
+              <div class="panel-inset row gap12"><span class="ms t-secondary" style="font-size:24px">preview</span><div><div class="caps-xs faint">Pratinjau</div><div id="be-preview" style="font-size:13px"></div></div></div>
+              <div class="row gap8"><button class="btn btn-primary grow" id="be-save"><span class="ms">save</span>Terapkan</button><button class="btn btn-ghost" id="be-delete" aria-label="Hapus gift"><span class="ms">delete</span></button></div>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:16px"><div class="row gap8" style="margin-bottom:10px"><span class="ms t-secondary">history</span><span class="h-sm">Boost terakhir dari penonton</span></div><div class="grid g3" id="boost-feed"><div class="empty" style="grid-column:1/-1">Belum ada gift pada sesi ini.</div></div></div>
+      </section>
+
+      <!-- ═════════ 4. PENGATURAN GAME ═════════ -->
+      <section id="v-game" class="view" aria-label="Pengaturan game">
+        <div class="page-head">
+          <div><div class="crumb">Dasbor › Mesin &amp; Fisika Game</div><h1 class="h-xl">Pengaturan Game</h1>
+            <p class="muted" style="margin:6px 0 0;max-width:640px">Fisika kendaraan, tiket tap, aturan sesi, dan sinkronisasi ke Google Sheets. Perubahan berlaku di sesi berikutnya kecuali “Terapkan langsung” aktif.</p></div>
+          <div class="row gap8 wrap"><span class="chip">Sync <b class="t-secondary num" data-out="interval_sync_detik">3</b> dtk</span><span class="chip">Mobil aktif <b class="t-success num" id="gs-cars">0</b></span><span class="chip"><span class="led" id="gs-led"></span><span id="gs-server">Server: —</span></span></div>
+        </div>
+        <div class="grid g2">
+          <div class="card">
+            <div class="card-head"><div class="card-title"><span class="ico-box"><span class="ms">speed</span></span><div><div class="h-sm">Syarat Masuk &amp; Pedal Gas</div><div class="caps-xs muted">Tiket tap &amp; fisika</div></div></div><span class="pill y">Fisika</span></div>
+            <div class="col gap16">
+              <div class="field"><div class="row between"><label for="c-tap">Jumlah tap tiket masuk</label><b class="t-secondary num"><span data-out="tap_tiket_masuk">100</span> tap</b></div><input class="input num" id="c-tap" type="number" min="1" max="5000" step="10" data-cfg="tap_tiket_masuk"><span class="err" data-err="tap_tiket_masuk"></span><span class="help">Penonton harus mengumpulkan tap sebanyak ini agar mobilnya muncul di arena.</span></div>
+              <div class="field"><div class="row between"><label for="c-kpt">Jarak per tap</label><b class="t-primary num"><span data-out="kecepatan_per_tap">0.8</span> m/tap</b></div><input type="range" id="c-kpt" min="0.1" max="2.5" step="0.1" data-cfg="kecepatan_per_tap"><div class="row between caps-xs faint"><span>0,1 (santai)</span><span>1,2</span><span>2,5 (supersonik)</span></div></div>
+              <div class="field"><label>Peluruhan kecepatan saat berhenti tap</label>
+                <div class="col gap8" id="c-pel" data-cfg="peluruhan" data-type="radio">
+                  <button class="radio-card" data-v="lambat" aria-pressed="false"><span class="dot"></span><span><b>Lambat</b><br><span class="help">Turun 5% per 2 detik</span></span></button>
+                  <button class="radio-card" data-v="sedang" aria-pressed="false"><span class="dot"></span><span><b>Sedang</b><br><span class="help">Turun 15% per 2 detik</span></span></button>
+                  <button class="radio-card" data-v="agresif" aria-pressed="false"><span class="dot"></span><span><b>Agresif</b><br><span class="help">Turun 30% per 2 detik</span></span></button>
+                  <button class="radio-card" data-v="instan" aria-pressed="false"><span class="dot"></span><span><b>Gesekan instan</b><br><span class="help">Berhenti dalam ±1 detik</span></span></button>
+                </div></div>
+              <div class="grid g2">
+                <div class="field"><label for="c-mka">Batas kecepatan alami (km/h)</label><input class="input num" id="c-mka" type="number" min="30" max="400" data-cfg="maks_kecepatan_alami"><span class="err" data-err="maks_kecepatan_alami"></span></div>
+                <div class="field"><label for="c-bkm">Batas total + nitro (km/h)</label><input class="input num" id="c-bkm" type="number" min="60" max="1000" data-cfg="batas_kecepatan_maks"><span class="err" data-err="batas_kecepatan_maks"></span></div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title"><span class="ico-box y"><span class="ms">flag_circle</span></span><div><div class="h-sm">Lintasan &amp; Visual Arena</div><div class="caps-xs muted">Panjang &amp; tata letak</div></div></div><span class="pill b">Kanvas 1080p</span></div>
+            <div class="col gap16">
+              <div class="field"><div class="row between"><label for="c-len">Panjang lintasan</label><b class="num"><span data-out="panjang_lintasan">1000</span> <span class="muted">meter</span></b></div><input class="input num" id="c-len" type="number" min="200" max="10000" step="50" data-cfg="panjang_lintasan"><span class="err" data-err="panjang_lintasan"></span><span class="help t-secondary" id="est-dur">—</span></div>
+              <div class="field"><label>Jumlah jalur tampil</label><div class="seg full" data-cfg="jumlah_jalur" data-type="seg" data-num="1"><button data-v="4" aria-pressed="false">4</button><button data-v="6" aria-pressed="false">6</button><button data-v="8" aria-pressed="false">8</button><button data-v="12" aria-pressed="false">12</button></div><span class="help">Jalur menampilkan pembalap terdepan; sisanya muncul di peta mini.</span></div>
+              <div class="field"><label for="c-tema">Tema lintasan</label><select class="select" id="c-tema" data-cfg="tema_lintasan"><option value="cyber">Cyber Neon City (ungu malam)</option><option value="desert">Desert Mirage (debu oranye)</option><option value="rainbow">Rainbow Highway (arcade 90-an)</option><option value="circuit">Midnight Circuit (hijau neon)</option></select></div>
+              <div class="field"><label for="c-peserta">Batas mobil aktif di arena</label><input class="input num" id="c-peserta" type="number" min="10" max="1000" data-cfg="maks_peserta_arena"><span class="err" data-err="maks_peserta_arena"></span></div>
+              <div class="panel-inset row between"><div class="row gap12"><span class="ms t-primary" style="font-size:22px">videocam</span><div><div class="lbl">Kamera siaran</div><div class="help">Side-scroll horizontal (OBS 16:9)</div></div></div><span class="pill y">Terkunci</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title"><span class="ico-box r"><span class="ms">rule</span></span><div><div class="h-sm">Aturan Sesi &amp; Balapan</div><div class="caps-xs muted">Penonton terlambat &amp; alur</div></div></div><span class="pill r">Aturan</span></div>
+            <div class="col gap16">
+              <div class="field"><label>Penonton bergabung di tengah balapan</label><div class="grid g2" data-cfg="mode_bergabung_terlambat" data-type="radio">
+                <button class="radio-card" data-v="antrean" aria-pressed="false"><span class="dot"></span><span><b>Antrean</b><br><span class="help">Masuk sesi berikutnya.</span></span></button>
+                <button class="radio-card" data-v="langsung" aria-pressed="false"><span class="dot"></span><span><b>Langsung start</b><br><span class="help">Muncul seketika di garis awal.</span></span></button></div></div>
+              <div class="field"><label>Hitung mundur start</label><div class="seg full gold" data-cfg="hitung_mundur_detik" data-type="seg" data-num="1"><button data-v="3" aria-pressed="false">3 dtk</button><button data-v="5" aria-pressed="false">5 dtk</button><button data-v="10" aria-pressed="false">10 dtk</button></div></div>
+              <div class="grid g2">
+                <div class="field"><label for="c-pod">Durasi podium (dtk)</label><input class="input num" id="c-pod" type="number" min="5" max="120" data-cfg="durasi_podium_detik"><span class="err" data-err="durasi_podium_detik"></span></div>
+                <div class="field"><span class="lbl">Kondisi menang</span><div class="panel-inset row gap8" style="min-height:44px"><span class="ms t-secondary">emoji_events</span>Mobil pertama finis</div></div>
+              </div>
+              <div class="panel-inset row between gap12"><div><div class="lbl">Gift langsung dapat mobil</div><div class="help">Pengirim gift tidak perlu tiket tap.</div></div><button class="switch" role="switch" aria-checked="false" data-cfg="gift_langsung_masuk" aria-label="Gift langsung dapat mobil"></button></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title"><span class="ico-box"><span class="ms">hub</span></span><div><div class="h-sm">TikTok Live &amp; Google Sheets</div><div class="caps-xs muted">Konektor &amp; sinkronisasi batch</div></div></div><span class="pill y">Sinkron</span></div>
+            <div class="col gap16">
+              <div class="field"><label for="c-host">Username host TikTok</label><div style="position:relative"><span class="t-secondary" style="position:absolute;left:14px;top:11px;font-weight:700">@</span><input class="input" id="c-host" style="padding-left:32px" data-cfg="username_host" maxlength="40" placeholder="nama_host"></div></div>
+              <div class="grid g2">
+                <div class="field"><label for="c-int">Interval batch (dtk)</label><input class="input num" id="c-int" type="number" min="2" max="30" data-cfg="interval_sync_detik"><span class="err" data-err="interval_sync_detik"></span><span class="help">Hemat kuota Apps Script.</span></div>
+                <div class="field"><label>Bersihkan Log_Event otomatis</label><div class="panel-inset row between" style="min-height:44px"><span>Setelah rekap</span><button class="switch" role="switch" aria-checked="false" data-cfg="auto_bersihkan_log" aria-label="Bersihkan log otomatis"></button></div></div>
+              </div>
+              <div class="panel-inset row between gap12"><div><div class="lbl">Terapkan langsung ke sesi aktif</div><div class="help">Jika mati, perubahan berlaku sesi berikutnya.</div></div><button class="switch" role="switch" aria-checked="false" data-cfg="terapkan_langsung" aria-label="Terapkan langsung"></button></div>
+              <div class="row gap8 wrap"><button class="btn btn-sm" id="btn-ping2"><span class="ms">wifi_find</span>Uji ping server</button></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title"><span class="ico-box g"><span class="ms">key</span></span><div><div class="h-sm">Keamanan</div><div class="caps-xs muted">PIN panel admin</div></div></div></div>
+            <div class="col gap12">
+              <div class="grid g2"><div class="field"><label for="pin-lama">PIN lama</label><input class="input num" id="pin-lama" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></div><div class="field"><label for="pin-baru">PIN baru (4–12 digit)</label><input class="input num" id="pin-baru" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></div></div>
+              <div class="row gap8"><button class="btn" id="btn-pin"><span class="ms">key</span>Ubah PIN</button><span class="err" id="pin-err"></span></div>
+              <span class="help">PIN disimpan sebagai hash di Script Properties, tidak pernah ada di kode frontend.</span>
+            </div>
+          </div>
+          <div class="card" style="grid-column:1/-1">
+            <div class="card-head"><div class="card-title"><span class="ico-box y"><span class="ms">database_upload</span></span><div><div class="h-sm">Migrasi Data dari Spreadsheet Lama</div><div class="caps-xs muted">Pindai dulu (dry-run), baru impor · aman diulang</div></div></div></div>
+            <div class="row gap12 wrap"><input class="input" id="mig-id" placeholder="ID atau URL spreadsheet lama (akun Google yang sama)" style="flex:1;min-width:240px" aria-label="ID spreadsheet lama"><button class="btn" id="btn-mig-scan"><span class="ms">search</span>Pindai</button><button class="btn btn-gold" id="btn-mig-run"><span class="ms">download</span>Impor</button></div>
+            <div class="panel-inset mono" id="mig-out" style="margin-top:12px;white-space:pre-wrap" hidden></div>
+            <p class="help" style="margin:10px 0 0">Spreadsheet lama hanya dibaca. Pencocokan berdasarkan nama header; total pemain memakai nilai terbesar; sesi yang sudah final tidak ditimpa.</p>
+          </div>
+        </div>
+        <div class="sticky-save">
+          <div class="row gap12"><span class="led warn pulse" id="dirty-led" hidden></span><div><div class="caps t-secondary" id="dirty-t">Semua tersimpan</div><div class="help" id="dirty-s">Belum ada perubahan.</div></div></div>
+          <div class="row gap8"><button class="btn" id="btn-cfg-reset"><span class="ms">restart_alt</span>Reset ke bawaan</button><button class="btn btn-primary" id="btn-cfg-save"><span class="ms">save</span>Simpan pengaturan</button></div>
+        </div>
+      </section>
+
+      <!-- ═════════ 5. RIWAYAT & LAPORAN ═════════ -->
+      <section id="v-riwayat" class="view" aria-label="Riwayat dan laporan">
+        <div class="page-head">
+          <div><div class="crumb">Riwayat</div><h1 class="h-xl">Riwayat &amp; Laporan</h1><p class="muted" style="margin:6px 0 0">Papan peringkat, rekap sesi, hasil balapan, dan grafik statistik.</p></div>
+          <div class="row gap8 wrap"><button class="btn" id="btn-xlsx"><span class="ms">table_view</span>Unduh Excel</button><button class="btn" id="btn-pdf"><span class="ms">picture_as_pdf</span>Unduh PDF</button><button class="btn btn-icon btn-ghost" id="btn-rw-refresh" aria-label="Muat ulang"><span class="ms">refresh</span></button></div>
+        </div>
+        <div class="tabs" id="rw-tabs" role="tablist">
+          <button class="chip-btn" data-tab="peringkat" aria-pressed="true">Papan peringkat</button>
+          <button class="chip-btn" data-tab="sesi" aria-pressed="false">Rekap sesi</button>
+          <button class="chip-btn" data-tab="hasil" aria-pressed="false">Hasil balapan</button>
+          <button class="chip-btn" data-tab="grafik" aria-pressed="false">Grafik</button>
+        </div>
+        <div class="filter-bar" id="rw-filter">
+          <div class="field"><label for="f-user">Username</label><input class="input" id="f-user" placeholder="cari username"></div>
+          <div class="field"><label for="f-dari">Dari tanggal</label><input class="input" id="f-dari" type="date"></div>
+          <div class="field"><label for="f-sampai">Sampai tanggal</label><input class="input" id="f-sampai" type="date"></div>
+          <div class="field" id="f-sesi-wrap"><label for="f-sesi">Sesi</label><select class="select" id="f-sesi"><option value="">Semua sesi</option></select></div>
+          <div class="field" id="f-sort-wrap"><label>Urutkan</label><div class="seg" id="rw-sort"><button data-s="menang" aria-pressed="true">Menang</button><button data-s="like" aria-pressed="false">Like</button><button data-s="gift" aria-pressed="false">Gift</button></div></div>
+          <button class="btn" id="btn-f-reset"><span class="ms">filter_alt_off</span>Reset</button>
+        </div>
+        <div id="rw-peringkat"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th>Pemain</th><th class="r">Menang</th><th class="r">Total like</th><th class="r">Total gift</th></tr></thead><tbody id="tb-peringkat"></tbody></table></div></div>
+        <div id="rw-sesi" hidden><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Tanggal</th><th>Sesi</th><th>Pemenang</th><th class="r">Peserta</th><th class="r">Like</th><th class="r">Gift</th><th class="r">Durasi</th></tr></thead><tbody id="tb-sesi"></tbody></table></div></div>
+        <div id="rw-hasil" hidden><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Tanggal</th><th>Sesi</th><th class="r">#</th><th>Pemain</th><th class="r">Jarak</th><th class="r">Nitro</th><th class="r">Tap</th><th class="r">Gift</th></tr></thead><tbody id="tb-hasil"></tbody></table></div><div class="help" id="hasil-info" style="margin-top:8px"></div></div>
+        <div id="rw-grafik" hidden>
+          <div class="grid g2">
+            <div class="card"><div class="row between wrap" style="margin-bottom:10px"><span class="h-sm">Like per menit</span><select class="select" id="ch-sesi" style="max-width:220px" aria-label="Pilih sesi"></select></div><div class="chart-box"><canvas id="ch-like" role="img" aria-label="Grafik like per menit"></canvas></div></div>
+            <div class="card"><div class="row between wrap" style="margin-bottom:10px"><span class="h-sm">Kontribusi gift per pemain</span><span class="help">sesi yang sama</span></div><div class="chart-box"><canvas id="ch-gift" role="img" aria-label="Grafik kontribusi gift"></canvas></div></div>
+          </div>
+          <div class="card" style="margin-top:16px"><div class="row between" style="margin-bottom:10px"><span class="h-sm">Gift per sesi</span></div><div class="chart-box"><canvas id="ch-gsesi" role="img" aria-label="Grafik gift per sesi"></canvas></div></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<nav id="bottomnav" aria-label="Navigasi">
+  <button data-view="arena" class="active"><span class="ms">fullscreen</span>Arena</button>
+  <button data-view="race"><span class="ms">sports_score</span>Balapan</button>
+  <button data-view="boost"><span class="ms">bolt</span>Boost</button>
+  <button data-view="game"><span class="ms">tune</span>Game</button>
+  <button data-view="riwayat"><span class="ms">leaderboard</span>Riwayat</button>
+</nav>
+
+<!-- Modal PIN -->
+<div class="modal-back" id="m-login" role="dialog" aria-modal="true" aria-labelledby="login-t">
+  <div class="modal">
+    <div class="row gap12" style="margin-bottom:12px"><span class="ico-box"><span class="ms">admin_panel_settings</span></span><div><div class="h-md" id="login-t">Masuk Admin</div><div class="help">Masukkan PIN host untuk membuka kontrol.</div></div></div>
+    <form id="login-form" autocomplete="off">
+      <input class="input pin-input num" id="login-pin" type="password" inputmode="numeric" maxlength="12" aria-label="PIN admin" autocomplete="off">
+      <div class="err" id="login-err" style="margin-top:6px;min-height:18px"></div>
+      <div class="row gap8" style="margin-top:12px;justify-content:flex-end"><button type="button" class="btn btn-ghost" id="btn-login-cancel">Batal</button><button type="submit" class="btn btn-primary" id="btn-login"><span class="ms">login</span>Masuk</button></div>
+    </form>
+  </div>
+</div>
+<!-- Modal konfirmasi -->
+<div class="modal-back" id="m-confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="modal"><div class="h-md" id="confirm-title">Konfirmasi</div><p class="muted" id="confirm-msg"></p>
+    <div class="row gap8" style="justify-content:flex-end"><button class="btn btn-ghost" id="confirm-cancel">Batal</button><button class="btn btn-nitro" id="confirm-ok">Ya, lanjutkan</button></div></div>
+</div>
+<div id="toasts" role="status" aria-live="polite"></div>
+<div id="obs-hint">Mode Siaran aktif · tekan Esc atau klik pojok kiri atas untuk keluar</div>
+<button id="obs-exit" aria-label="Keluar mode siaran"></button>
+
+<noscript><p style="padding:24px;color:#fff">Aplikasi ini membutuhkan JavaScript.</p></noscript>
+<script src="js/config.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
