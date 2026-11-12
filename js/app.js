@@ -3,11 +3,8 @@
  * TurboTap Live — JavaScript.html (seluruh logika sisi klien)
  *  1. Engine balap (tanpa DOM, bisa diuji terpisah)
  *  2. Utilitas, API, Outbox (antrean sinkron batch + localStorage)
- *  3. UI: Arena, Podium, Kontrol, Boost, Game, Riwayat
+ *  3. UI: Arena (Sirkuit 5 KM), Podium, Kontrol, Boost, Game, Riwayat
  *  4. Konektor TikTok Live (WebSocket lokal) & Simulator
- * Frontend statis (GitHub Pages) → memanggil backend REST Apps Script
- * lewat fetch(). Navigasi 100% di sisi klien (SPA): tanpa reload/redirect.
- * Satu-satunya konfigurasi: js/config.js (GAS_URL). Tanpa rahasia di sini.
  * ============================================================
  */
 
@@ -15,7 +12,7 @@
 const SKALA = 6;                       // 1 m/s = 6 km/h (skala tampilan)
 const WARNA = ['#2D7DFF', '#FF4D2E', '#FFD23F', '#2EE59D', '#B57CFF', '#FF7AD9', '#4DE1FF', '#FF9F43'];
 const DEFAULT_CONFIG = {
-  tap_tiket_masuk: 100, panjang_lintasan: 1000, kecepatan_per_tap: 0.8, peluruhan: 'sedang',
+  tap_tiket_masuk: 100, panjang_lintasan: 5000, kecepatan_per_tap: 0.8, peluruhan: 'sedang',
   maks_kecepatan_alami: 120, batas_kecepatan_maks: 380, jumlah_jalur: 6, tema_lintasan: 'cyber',
   mode_bergabung_terlambat: 'antrean', hitung_mundur_detik: 5, durasi_podium_detik: 20,
   gift_langsung_masuk: 'ya', interval_sync_detik: 3, auto_bersihkan_log: 'ya', terapkan_langsung: 'tidak',
@@ -594,34 +591,38 @@ function setObs(on) {
 }
 
 // ════════════════════════════════════════════════════════
-// BAGIAN 5: ARENA — lintasan, mobil, papan peringkat
+// BAGIAN 5: ARENA — Sirkuit Grand Prix 5.000 M, mobil, papan peringkat
 // ════════════════════════════════════════════════════════
 const PAD_L = 46, PAD_R = 36, CAR_W = 104;
-let laneEls = [], trackW = 800, mapEls = [];
+let laneEls = [], trackW = 800, mapEls = [], circuitLen = 0;
 const lanesEl = $('lanes');
 
 function buildLanes() {
   const n = eng.cfg.lanes;
   lanesEl.innerHTML = ''; laneEls = [];
   for (let i = 0; i < n; i++) {
-    const lane = document.createElement('div'); lane.className = 'lane';
-    lane.innerHTML = '<span class="lane-n">L' + (i + 1) + '</span>';
+    const lane = document.createElement('div');
+    lane.className = 'circuit-slot';
     lanesEl.appendChild(lane);
-    laneEls.push({ lane: lane, assigned: null, ref: null });
+    laneEls.push({ lane: lane, assigned: null, ref: null, idx: i });
   }
-  $('track').className = 'track theme-' + eng.cfg.tema;
-  setText($('stage-title'), 'Lintasan ' + nf(eng.cfg.L) + ' m');
-  setText($('finish-tag'), 'FINISH ' + nf(eng.cfg.L) + 'M');
+  $('track').className = 'track circuit-mode theme-' + eng.cfg.tema;
+  setText($('stage-title'), 'Sirkuit Grand Prix ' + nf(eng.cfg.L) + ' m');
+  setText($('finish-tag'), 'START / FINISH ' + nf(eng.cfg.L) + 'M');
   measureTrack();
 }
-function measureTrack() { trackW = Math.max(300, lanesEl.clientWidth || 800); }
+function measureTrack() {
+  trackW = Math.max(300, lanesEl.clientWidth || 800);
+  const path = $('circuit-path');
+  if (path && path.getTotalLength) circuitLen = path.getTotalLength();
+}
 if (window.ResizeObserver) new ResizeObserver(measureTrack).observe(lanesEl);
 
 function makeCarEl(car) {
   const el = document.createElement('div');
   el.className = 'car'; el.style.setProperty('--car', WARNA[car.v.color]);
   el.innerHTML = '<div class="tag"><b></b><i></i></div><div class="car-body"><span class="flame"></span><svg viewBox="0 0 120 50"><use href="#svg-car"/></svg><span class="car-no"></span></div><div class="car-meta"></div>';
-  const ref = { el: el, name: el.querySelector('.tag b'), dist: el.querySelector('.tag i'), no: el.querySelector('.car-no'), meta: el.querySelector('.car-meta') };
+  const ref = { el: el, tag: el.querySelector('.tag'), body: el.querySelector('.car-body'), meta: el.querySelector('.car-meta'), name: el.querySelector('.tag b'), dist: el.querySelector('.tag i'), no: el.querySelector('.car-no') };
   ref.no.textContent = '#' + pad2(car.no);
   return ref;
 }
@@ -648,13 +649,39 @@ function assignLanes(rank) {
   }
 }
 
-function renderFrame(tNow) {
-  const cfg = eng.cfg, usable = trackW - PAD_L - PAD_R - CAR_W;
+function renderFrame() {
+  const cfg = eng.cfg, path = $('circuit-path'), svg = $('circuit-svg');
+  if (!path || !svg) return;
+  if (!circuitLen) circuitLen = path.getTotalLength();
+  const rect = svg.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+
+  // Skala viewBox (1000x540) dengan preserveAspectRatio="xMidYMid meet"
+  const scale = Math.min(rect.width / 1000, rect.height / 540);
+  const offX = (rect.width - 1000 * scale) / 2;
+  const offY = (rect.height - 540 * scale) / 2;
+  const startOffset = 0.085; // Posisi garis Start/Finish pada path SVG
+
   for (let i = 0; i < laneEls.length; i++) {
     const L = laneEls[i];
     if (!L.assigned) continue;
-    const x = PAD_L + (L.assigned.d / cfg.L) * usable;
-    L.ref.el.style.transform = 'translate3d(' + x.toFixed(1) + 'px,0,0)';
+    const prog = ((L.assigned.d / cfg.L) + startOffset) % 1;
+    const dist = prog * circuitLen;
+    const pt = path.getPointAtLength(dist);
+    const pt2 = path.getPointAtLength((dist + 4) % circuitLen);
+    const angle = Math.atan2(pt2.y - pt.y, pt2.x - pt.x);
+
+    // Sebar mobil sedikit ke sisi dalam/luar jalur agar tidak saling menumpuk penuh
+    const laneShift = (i - (laneEls.length - 1) / 2) * 6;
+    const nx = -Math.sin(angle) * laneShift;
+    const ny = Math.cos(angle) * laneShift;
+
+    const x = offX + (pt.x + nx) * scale;
+    const y = offY + (pt.y + ny) * scale;
+    const deg = (angle * 180 / Math.PI).toFixed(1);
+
+    L.ref.el.style.transform = 'translate3d(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px,0)';
+    L.ref.body.style.transform = 'rotate(' + deg + 'deg)';
   }
 }
 
@@ -794,6 +821,13 @@ function syncButtons() {
   $('btn-pause').disabled = !(s === 'running'); $('btn-stop').disabled = !(run || s === 'paused');
   $('btn-reset').disabled = false; $('btn-clear').disabled = false;
   ['qb-all', 'qb-pack', 'qb-frenzy'].forEach(function (id) { $(id).disabled = !(s === 'running'); });
+  // Sinkronkan tombol di Mode Siaran
+  if ($('obs-btn-start')) {
+    $('obs-btn-start').disabled = !(s === 'idle' || s === 'paused');
+    setText($('obs-start-txt'), s === 'paused' ? 'Lanjut' : 'Mulai');
+    $('obs-btn-pause').disabled = !(s === 'running');
+    $('obs-btn-stop').disabled = !(run || s === 'paused');
+  }
   void act;
 }
 function connUI() {
@@ -1112,7 +1146,7 @@ const Konektor = {
       if (Konektor.ws !== ws) return;
       if (!Konektor.pernahBuka && Konektor.want && !Konektor.peringatan) {
         Konektor.peringatan = true;
-        toast('Belum bisa menyambung ke ' + url + '. Pastikan konektor (node konektor.js) berjalan di PC INI. Jika browser menanyakan izin "akses jaringan lokal / local network", pilih Izinkan (ikon gembok di address bar → Setelan situs).', 'warning', 12000);
+        toast('Belum bisa menyambung ke ' + url + '. Pastikan konektor (node konektor.js) berjalan di PC INI.', 'warning', 12000);
         logEvent('wifi_off', 'Konektor belum terjangkau', url, 'warn');
       }
       if (S.conn === 'ws') { S.conn = 'lost'; connUI(); logEvent('wifi_off', 'Konektor terputus', 'Arena tetap berjalan. Mencoba menyambung ulang…', 'warn'); toast('Koneksi TikTok Live terputus — arena tetap berjalan.', 'warning'); }
@@ -1145,12 +1179,14 @@ function simStart() {
       if (pool.length) { const w = pool.filter(function () { return Math.random() < 0.6; }), r = (w.length ? w : pool)[Math.floor(Math.random() * (w.length || pool.length))]; eng.gift(b.u, b.n, r.jenis_gift.split('|')[0], r.nilai_koin, Math.random() < .2 ? 1 + Math.floor(Math.random() * 5) : 1); }
     }
   }, 250);
+  if ($('obs-sim-txt')) setText($('obs-sim-txt'), 'Sim: On');
   connUI(); renderSideSession();
 }
 function simStop() {
   S.sim.on = false; clearInterval(S.sim.timer);
   if (eng.state === 'idle') S.demo = false;
   if (S.conn === 'demo') { S.conn = 'off'; S.connSrc = '—'; }
+  if ($('obs-sim-txt')) setText($('obs-sim-txt'), 'Sim: Off');
   connUI(); renderSideSession();
 }
 
@@ -1220,6 +1256,18 @@ function bind() {
   $('btn-start').addEventListener('click', cmdStart); $('btn-pause').addEventListener('click', function () { eng.pause(); });
   $('btn-stop').addEventListener('click', cmdStop); $('btn-reset').addEventListener('click', cmdReset); $('btn-clear').addEventListener('click', cmdClear);
   $('btn-emergency').addEventListener('click', cmdClear);
+  // Kontrol cepat di Mode Siaran
+  if ($('obs-btn-start')) {
+    $('obs-btn-start').addEventListener('click', cmdStart);
+    $('obs-btn-pause').addEventListener('click', function () { eng.pause(); });
+    $('obs-btn-stop').addEventListener('click', cmdStop);
+    $('obs-btn-reset').addEventListener('click', cmdReset);
+    $('obs-btn-sim').addEventListener('click', function () {
+      const on = !S.sim.on;
+      $('sim-toggle').setAttribute('aria-checked', String(on));
+      on ? simStart() : simStop();
+    });
+  }
   $('qb-all').addEventListener('click', function () { const k = eng.boostAll(20, 6); logEvent('bolt', 'Host Overboost +20%', 'Semua mobil +' + k + ' km/h selama 6 dtk', 'gift'); });
   $('qb-pack').addEventListener('click', function () { const n = eng.packTighten(); logEvent('compress', 'Rapatkan barisan', n + ' pembalap belakang dapat dorongan', 'gift'); });
   $('qb-frenzy').addEventListener('click', function () { eng.frenzy(15); logEvent('whatshot', 'Nitro Frenzy 15 detik', 'Boost gift berlipat 2×', 'gift'); });
@@ -1305,7 +1353,10 @@ async function pingServer() {
 // BAGIAN 13: INISIALISASI (render dari cache lokal → sinkron server)
 // ════════════════════════════════════════════════════════
 function applyBootstrap(d) {
-  if (d.config) { S.config = Object.assign({}, DEFAULT_CONFIG, d.config); ls.set('tt_cfg', S.config); eng.setConfig(S.config, false); }
+  if (d.config) {
+    if (+d.config.panjang_lintasan === 1000) d.config.panjang_lintasan = 5000;
+    S.config = Object.assign({}, DEFAULT_CONFIG, d.config); ls.set('tt_cfg', S.config); eng.setConfig(S.config, false);
+  }
   if (d.boosts && d.boosts.length) { S.boosts = d.boosts; ls.set('tt_boost', S.boosts); eng.setBoosts(S.boosts, false); }
   if (d.nomorSesi && eng.state === 'idle' && d.nomorSesi > eng.E.sesiNo) eng.E.sesiNo = d.nomorSesi;
   armSync(); connUI(); syncControls(); renderSideSession();
@@ -1313,7 +1364,9 @@ function applyBootstrap(d) {
 }
 function init() {
   setTheme(ls.get('tt_theme', 'dark'));
-  S.config = Object.assign({}, DEFAULT_CONFIG, ls.get('tt_cfg', {}));
+  const cachedCfg = ls.get('tt_cfg', {});
+  if (+cachedCfg.panjang_lintasan === 1000) cachedCfg.panjang_lintasan = 5000;
+  S.config = Object.assign({}, DEFAULT_CONFIG, cachedCfg);
   const b = ls.get('tt_boost', null); if (b && b.length) S.boosts = b;
   eng.setConfig(S.config, true); eng.setBoosts(S.boosts, true);
   const bs = ls.get('tt_boot', null); if (bs && bs.nomorSesi) eng.E.sesiNo = bs.nomorSesi;
