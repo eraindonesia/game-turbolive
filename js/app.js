@@ -1095,13 +1095,13 @@ async function doExport(kind) {
 // BAGIAN 10: KONEKTOR TIKTOK LIVE (WebSocket lokal) & SIMULATOR
 // ════════════════════════════════════════════════════════
 const Konektor = {
-  ws: null, want: false, timer: 0,
+  ws: null, want: false, timer: 0, pernahBuka: false, peringatan: false,
   connect: function (url) {
-    this.want = true; clearTimeout(this.timer);
+    this.want = true; clearTimeout(this.timer); ls.set('tt_ws', { on: true, url: url });
     try { if (this.ws) this.ws.close(); } catch (e) { /* abaikan */ }
     let ws; try { ws = new WebSocket(url); } catch (e) { toast('Alamat konektor tidak valid.', 'danger'); return; }
     this.ws = ws; S.connSrc = 'TikTok'; $('btn-ws').lastChild.textContent = 'Menyambung…';
-    ws.onopen = function () { S.conn = 'ws'; connUI(); $('btn-ws').lastChild.textContent = 'Putuskan'; logEvent('hub', 'Konektor tersambung', url, 'ok'); toast('Konektor TikTok Live tersambung.', 'success'); };
+    ws.onopen = function () { Konektor.pernahBuka = true; Konektor.peringatan = false; S.conn = 'ws'; connUI(); $('btn-ws').lastChild.textContent = 'Putuskan'; logEvent('hub', 'Konektor tersambung', url, 'ok'); toast('Konektor TikTok Live tersambung.', 'success'); };
     ws.onmessage = function (ev) {
       let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
       if (m.t === 'like') eng.like(m.u, m.n, m.c);
@@ -1110,13 +1110,18 @@ const Konektor = {
     };
     const lost = function () {
       if (Konektor.ws !== ws) return;
+      if (!Konektor.pernahBuka && Konektor.want && !Konektor.peringatan) {
+        Konektor.peringatan = true;
+        toast('Belum bisa menyambung ke ' + url + '. Pastikan konektor (node konektor.js) berjalan di PC INI. Jika browser menanyakan izin "akses jaringan lokal / local network", pilih Izinkan (ikon gembok di address bar → Setelan situs).', 'warning', 12000);
+        logEvent('wifi_off', 'Konektor belum terjangkau', url, 'warn');
+      }
       if (S.conn === 'ws') { S.conn = 'lost'; connUI(); logEvent('wifi_off', 'Konektor terputus', 'Arena tetap berjalan. Mencoba menyambung ulang…', 'warn'); toast('Koneksi TikTok Live terputus — arena tetap berjalan.', 'warning'); }
       $('btn-ws').lastChild.textContent = Konektor.want ? 'Menyambung…' : 'Sambung';
       if (Konektor.want) Konektor.timer = setTimeout(function () { Konektor.connect(url); }, 3000);
     };
     ws.onclose = lost; ws.onerror = function () { try { ws.close(); } catch (e) { /* abaikan */ } };
   },
-  disconnect: function () { this.want = false; clearTimeout(this.timer); try { if (this.ws) this.ws.close(); } catch (e) { /* abaikan */ } this.ws = null; S.conn = S.sim.on ? 'demo' : 'off'; S.connSrc = S.sim.on ? 'Simulator' : '—'; connUI(); $('btn-ws').lastChild.textContent = 'Sambung'; }
+  disconnect: function () { this.want = false; this.pernahBuka = false; this.peringatan = false; ls.set('tt_ws', { on: false, url: ($('ws-url') && $('ws-url').value) || 'ws://localhost:8765' }); clearTimeout(this.timer); try { if (this.ws) this.ws.close(); } catch (e) { /* abaikan */ } this.ws = null; S.conn = S.sim.on ? 'demo' : 'off'; S.connSrc = S.sim.on ? 'Simulator' : '—'; connUI(); $('btn-ws').lastChild.textContent = 'Sambung'; }
 };
 const NAMA = ['budi_gaming', 'siti_speed', 'andi_tap', 'clara_queen', 'rizky_tap', 'wahyu_99', 'doni_racing', 'speedy_boy', 'nina.drift', 'joko_turbo', 'lestari88', 'fajar_x', 'ayu_cantik', 'bima_s', 'dewi_nitro', 'eko_gas', 'farah_live', 'gilang_pro', 'hana_tap', 'indra_k', 'jasmine_r', 'kevin_gt', 'lia_moto', 'maman_slow', 'nanda_rev', 'oki_boost', 'putri_zoom', 'qori_fast', 'reza_king', 'sari_tap'];
 S.sim = { on: false, bots: [], timer: 0, giftFreq: 4, n: 30 };
@@ -1323,6 +1328,9 @@ function init() {
     if (w && w.success) { S.rw = w.data; ls.set('tt_rw', S.rw); }
   });
   if (S.token) outKick();
+  const w = ls.get('tt_ws', null);                       // sambung otomatis jika terakhir dipakai
+  if (w && w.url) $('ws-url').value = w.url;
+  if (w && w.on && w.url) setTimeout(function () { Konektor.connect(w.url); }, 600);
 }
 init();
 })();
