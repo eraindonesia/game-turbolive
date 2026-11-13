@@ -584,8 +584,44 @@ function setTheme(t) {
   if (S.view === 'riwayat' && S.rwTab === 'grafik') renderCharts();
 }
 
+// ── Dock kontrol Mode Siaran: tombol meneruskan klik ke kontrol Race Control (handler & konfirmasi sama) ──
+const DOCK_MAP = { 'dk-start': 'btn-start', 'dk-pause': 'btn-pause', 'dk-stop': 'btn-stop', 'dk-reset': 'btn-reset', 'dk-clear': 'btn-clear', 'dk-all': 'qb-all', 'dk-pack': 'qb-pack', 'dk-frenzy': 'qb-frenzy', 'dk-auto': 'auto-toggle', 'dk-sim': 'sim-toggle', 'dk-login': 'btn-auth' };
+let dockTimer = 0;
+function dockShow() {
+  const d = $('obs-dock'); if (!d) return;
+  d.classList.remove('hide'); clearTimeout(dockTimer);
+  dockTimer = setTimeout(function () {
+    if (!document.body.classList.contains('obs')) return;
+    if (d.matches(':hover') || d.contains(document.activeElement) || document.querySelector('.modal-back.show')) { dockShow(); return; }
+    d.classList.add('hide');
+  }, 3500);
+}
+function syncDock() {
+  if (!document.body.classList.contains('obs')) return;
+  const E = eng.E, label = { idle: 'Siap', countdown: 'Bersiap', running: 'Balapan', paused: 'Dijeda', finishing: 'Finis', finished: 'Selesai' }[E.state] || '—';
+  setText($('dock-state'), label); setText($('dock-cars'), eng.stats().cars);
+  $('dock-led').className = 'led ' + (E.state === 'running' ? 'ok' : 'warn');
+  Object.keys(DOCK_MAP).forEach(function (k) {
+    const src = $(DOCK_MAP[k]), b = $(k); if (!src || !b) return;
+    if (k === 'dk-auto' || k === 'dk-sim') { b.setAttribute('aria-pressed', src.getAttribute('aria-checked') === 'true' ? 'true' : 'false'); return; }
+    if (k === 'dk-login') { b.hidden = !!S.token; return; }
+    b.disabled = src.disabled;
+  });
+  const t = $('dk-start').querySelector('.dk-t'); if (t) t.textContent = E.state === 'paused' ? 'Lanjut' : 'Mulai';
+}
+function initDock() {
+  Object.keys(DOCK_MAP).forEach(function (k) {
+    $(k).addEventListener('click', function () { $(DOCK_MAP[k]).click(); setTimeout(syncDock, 60); dockShow(); });
+  });
+  $('dk-exit').addEventListener('click', function () { setObs(false); });
+  ['mousemove', 'pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
+    document.addEventListener(ev, function () { if (document.body.classList.contains('obs')) dockShow(); }, { passive: true });
+  });
+}
+
 function setObs(on) {
   document.body.classList.toggle('obs', on);
+  if (on) { syncDock(); dockShow(); }
   if (on) {
     go('arena'); $('obs-hint').style.display = 'block'; setTimeout(function () { $('obs-hint').style.display = 'none'; }, 4000);
     if (document.documentElement.requestFullscreen) { try { document.documentElement.requestFullscreen().catch(function () {}); } catch (e) { /* abaikan */ } }
@@ -608,7 +644,7 @@ const TEMA = {
 };
 const roadWrap = $('track'), roadCv = $('road'), rctx = roadCv ? roadCv.getContext('2d') : null;
 const REDUCE = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
-let RW = 800, RH = 450, DPR = 1, course = null, camZ = -18, camLat = 0, fovD = 1.15, lastRT = 0, avgDt = 0.016, peakKmh = 0, focusNo = 0;
+let course_turns = 0, RW = 800, RH = 450, DPR = 1, course = null, camZ = -18, camLat = 0, fovD = 1.15, lastRT = 0, avgDt = 0.016, peakKmh = 0, focusNo = 0;
 const Q = { n: 150 };
 const PX = new Float32Array(NMAX + 2), PY = new Float32Array(NMAX + 2), PW = new Float32Array(NMAX + 2), SC = new Float32Array(NMAX + 2), PZ = new Float32Array(NMAX + 2);
 const fr_ = function (x) { return x - Math.floor(x); };
@@ -621,13 +657,20 @@ function rng_(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 |
 function buildCourse(L) {
   const total = Math.ceil((L + 900) / SEGL) + 4, r = rng_(20261111 + Math.round(L));
   const curve = new Float32Array(total), hill = new Float32Array(total), heading = new Float32Array(total);
-  let i = 0;
-  const seg = function (n, c0, c1) { for (let k = 0; k < n && i < total; k++, i++) curve[i] = lp_(c0, c1, sm_(k / n)); };
-  seg(40, 0, 0);
-  while (i < total) {
-    const a = (0.012 + r() * 0.02) * (r() < 0.5 ? -1 : 1);
-    seg(10 + (r() * 10 | 0), 0, a); seg(10 + (r() * 30 | 0), a, a); seg(10 + (r() * 10 | 0), a, 0); seg(8 + (r() * 30 | 0), 0, 0);
+  // 5–10 tikungan (≈1 per 125 m) tersebar merata; start & finis tetap lurus. Arah berselang-seling, maks 2 searah berturut-turut.
+  const nTurn = clamp(Math.round(L / 125), 5, 10), s0 = 22, s1 = Math.max(s0 + nTurn * 14, Math.floor((L - 130) / SEGL));
+  const slot = (s1 - s0) / nTurn;
+  let dir = r() < 0.5 ? -1 : 1, same = 0;
+  for (let j = 0; j < nTurn; j++) {
+    if (j > 0) { if (same >= 2 || r() < 0.65) { dir = -dir; same = 1; } else same++; } else same = 1;
+    const a = (0.02 + r() * 0.02) * dir, len = Math.max(10, Math.floor(slot * (0.72 + r() * 0.12))), st = Math.floor(s0 + j * slot + (slot - len) * r() * 0.6);
+    const e1 = Math.max(3, Math.round(len * 0.28)), e2 = Math.max(3, Math.round(len * 0.28));
+    for (let k = 0; k < len; k++) {
+      const idx = st + k; if (idx >= total) break;
+      curve[idx] = k < e1 ? a * sm_(k / e1) : k >= len - e2 ? a * sm_((len - 1 - k) / e2) : a;
+    }
   }
+  course_turns = nTurn;
   let h = 0, x = 0, y = 0, minX = 0, maxX = 0, minY = 0, maxY = 0; const pts = [];
   for (let k = 0; k < total; k++) {
     const z = k * SEGL, tail = clamp((z - (L - 130)) / 90, 0, 1);       // lurus & datar menjelang finis
@@ -642,7 +685,7 @@ function buildCourse(L) {
     const nx = ox + (pts[k] - minX) / span, ny = oy + (pts[k + 1] - minY) / span; npt.push(nx, ny);
     if (k === 0) path.moveTo(nx, ny); else path.lineTo(nx, ny);
   }
-  course = { L: L, curve: curve, hill: hill, heading: heading, total: total, path: path, pts: npt };
+  course = { L: L, turns: nTurn, curve: curve, hill: hill, heading: heading, total: total, path: path, pts: npt };
 }
 function curveAt(i) { return i < 0 ? 0 : course.curve[Math.min(i, course.total - 1)]; }
 function hillAt(i) { return i < 0 ? 0 : course.hill[Math.min(i, course.total - 1)]; }
@@ -1432,6 +1475,7 @@ function frame(ms) {
     lastSlow = ms;
     if (S.view === 'arena' && !$('arena-race').hidden) renderSlow();
     else if (S.view === 'race') renderRace();
+    syncDock();                                  // dock Mode Siaran tetap akurat saat layar podium tampil
   }
   requestAnimationFrame(frame);
 }
@@ -1460,6 +1504,7 @@ function bind() {
   // navigasi
   $$('[data-view]').forEach(function (b) { b.addEventListener('click', function () { go(b.dataset.view); }); });
   $('btn-theme').addEventListener('click', function () { setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'); });
+  initDock();
   $('btn-obs').addEventListener('click', function () { setObs(true); }); $('btn-obs2').addEventListener('click', function () { setObs(true); });
   $('obs-exit').addEventListener('click', function () { setObs(false); });
   document.addEventListener('keydown', function (e) {

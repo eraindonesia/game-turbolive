@@ -429,6 +429,24 @@
 <div id="toasts" role="status" aria-live="polite"></div>
 <div id="obs-hint">Mode Siaran aktif · tekan Esc atau klik pojok kiri atas untuk keluar</div>
 <button id="obs-exit" aria-label="Keluar mode siaran"></button>
+<div id="obs-dock" role="toolbar" aria-label="Kontrol balapan (Mode Siaran)">
+  <span class="dock-st"><span class="led" id="dock-led"></span><b id="dock-state">—</b><span class="dock-sep"></span><span class="num" id="dock-cars">0</span><span class="ms" style="font-size:16px">directions_car</span></span>
+  <button class="dk" id="dk-start" title="Mulai / Lanjut"><span class="ms fill">play_arrow</span><span class="dk-t">Mulai</span></button>
+  <button class="dk" id="dk-pause" title="Jeda"><span class="ms">pause</span><span class="dk-t">Jeda</span></button>
+  <button class="dk dk-bad" id="dk-stop" title="Hentikan"><span class="ms fill">stop</span><span class="dk-t">Stop</span></button>
+  <button class="dk" id="dk-reset" title="Reset sesi"><span class="ms">replay</span><span class="dk-t">Reset</span></button>
+  <button class="dk" id="dk-clear" title="Kosongkan lintasan"><span class="ms">delete_sweep</span><span class="dk-t">Kosongkan</span></button>
+  <span class="dock-sep"></span>
+  <button class="dk" id="dk-all" title="+20% semua pembalap"><span class="ms">bolt</span><span class="dk-t">+20%</span></button>
+  <button class="dk" id="dk-pack" title="Rapatkan barisan"><span class="ms">compress</span><span class="dk-t">Rapat</span></button>
+  <button class="dk dk-bad" id="dk-frenzy" title="Nitro Frenzy 15 dtk"><span class="ms">whatshot</span><span class="dk-t">Frenzy</span></button>
+  <span class="dock-sep"></span>
+  <button class="dk dk-sw" id="dk-auto" title="Mulai otomatis" aria-pressed="false"><span class="ms">autoplay</span><span class="dk-t">Auto</span></button>
+  <button class="dk dk-sw" id="dk-sim" title="Simulator penonton" aria-pressed="false"><span class="ms">smart_toy</span><span class="dk-t">Simulasi</span></button>
+  <span class="dock-sep"></span>
+  <button class="dk" id="dk-login" title="Masuk admin"><span class="ms">lock</span><span class="dk-t">Masuk</span></button>
+  <button class="dk" id="dk-exit" title="Keluar Mode Siaran (Esc)"><span class="ms">fullscreen_exit</span><span class="dk-t">Keluar</span></button>
+</div>
 
 <noscript><p style="padding:24px;color:#fff">Aplikasi ini membutuhkan JavaScript.</p></noscript>
 <script src="js/config.js"></script>
