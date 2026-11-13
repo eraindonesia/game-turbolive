@@ -3,8 +3,11 @@
  * TurboTap Live — JavaScript.html (seluruh logika sisi klien)
  *  1. Engine balap (tanpa DOM, bisa diuji terpisah)
  *  2. Utilitas, API, Outbox (antrean sinkron batch + localStorage)
- *  3. UI: Arena (Sirkuit 5 KM), Podium, Kontrol, Boost, Game, Riwayat
+ *  3. UI: Arena, Podium, Kontrol, Boost, Game, Riwayat
  *  4. Konektor TikTok Live (WebSocket lokal) & Simulator
+ * Frontend statis (GitHub Pages) → memanggil backend REST Apps Script
+ * lewat fetch(). Navigasi 100% di sisi klien (SPA): tanpa reload/redirect.
+ * Satu-satunya konfigurasi: js/config.js (GAS_URL). Tanpa rahasia di sini.
  * ============================================================
  */
 
@@ -12,7 +15,7 @@
 const SKALA = 6;                       // 1 m/s = 6 km/h (skala tampilan)
 const WARNA = ['#2D7DFF', '#FF4D2E', '#FFD23F', '#2EE59D', '#B57CFF', '#FF7AD9', '#4DE1FF', '#FF9F43'];
 const DEFAULT_CONFIG = {
-  tap_tiket_masuk: 100, panjang_lintasan: 5000, kecepatan_per_tap: 0.8, peluruhan: 'sedang',
+  tap_tiket_masuk: 100, panjang_lintasan: 1000, kecepatan_per_tap: 0.8, peluruhan: 'sedang',
   maks_kecepatan_alami: 120, batas_kecepatan_maks: 380, jumlah_jalur: 6, tema_lintasan: 'cyber',
   mode_bergabung_terlambat: 'antrean', hitung_mundur_detik: 5, durasi_podium_detik: 20,
   gift_langsung_masuk: 'ya', interval_sync_detik: 3, auto_bersihkan_log: 'ya', terapkan_langsung: 'tidak',
@@ -591,114 +594,357 @@ function setObs(on) {
 }
 
 // ════════════════════════════════════════════════════════
-// BAGIAN 5: ARENA — Sirkuit Grand Prix 5.000 M, mobil, papan peringkat
+// BAGIAN 5: ARENA 3D SEMU — kamera pengejar, jalan melengkung/berbukit, HUD balap
+//   Semua digambar di <canvas> (satu elemen DOM) → ringan untuk siaran OBS.
+//   Dunia: 1 satuan = 1 m sepanjang lintasan; lebar & tinggi dilebihkan agar terbaca di layar.
 // ════════════════════════════════════════════════════════
-const PAD_L = 46, PAD_R = 36, CAR_W = 104;
-let laneEls = [], trackW = 800, mapEls = [], circuitLen = 0;
-const lanesEl = $('lanes');
+const SEGL = 3, ROAD_W = 15, CAM_H = 6, CAR_UNITS = 4.3, HK = 2.2, NMAX = 160;
+let LANES_V = 6;                         // diikuti dari pengaturan jumlah jalur
+const TEMA = {
+  cyber:   { sky: ['#0a0630', '#2a1478', '#c43c8c'], sun: '#ffd23f', far: '#34228a', near: '#241a66', g1: '#0d3b4a', g2: '#0b3341', r1: '#2c2c42', r2: '#27273b', rum1: '#ff3d71', rum2: '#f4f4ff', lane: '#8fe3ff', haze: '#3b2390', obj: 'pine',   c1: '#2EE59D', c2: '#0f7f5c' },
+  desert:  { sky: ['#f59e5b', '#ffc98a', '#ffeccc'], sun: '#fff7d6', far: '#c9794b', near: '#a95c38', g1: '#e6b06c', g2: '#dca55f', r1: '#4b4541', r2: '#453f3b', rum1: '#d6402d', rum2: '#ffffff', lane: '#fff1c0', haze: '#ffd9a0', obj: 'cactus', c1: '#5b8f3d', c2: '#3f6a2a' },
+  rainbow: { sky: ['#3a1a8c', '#d6479f', '#ffd166'], sun: '#fff3b0', far: '#7b4fd6', near: '#5b36b5', g1: '#2f9e8f', g2: '#2a8f82', r1: '#3a2d63', r2: '#352858', rum1: '#ff6b6b', rum2: '#ffe66d', lane: '#ffffff', haze: '#e08ad0', obj: 'candy',  c1: '#ff7ad9', c2: '#4de1ff' },
+  circuit: { sky: ['#030812', '#0a2036', '#14405a'], sun: '#9ff3ff', far: '#123252', near: '#0c2540', g1: '#08141f', g2: '#0a1a28', r1: '#1a2230', r2: '#161d2a', rum1: '#2EE59D', rum2: '#0b1220', lane: '#2EE59D', haze: '#14405a', obj: 'pylon',  c1: '#4de1ff', c2: '#2EE59D' }
+};
+const roadWrap = $('track'), roadCv = $('road'), rctx = roadCv ? roadCv.getContext('2d') : null;
+const REDUCE = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+let RW = 800, RH = 450, DPR = 1, course = null, camZ = -18, camLat = 0, fovD = 1.15, lastRT = 0, avgDt = 0.016, peakKmh = 0, focusNo = 0;
+const Q = { n: 150 };
+const PX = new Float32Array(NMAX + 2), PY = new Float32Array(NMAX + 2), PW = new Float32Array(NMAX + 2), SC = new Float32Array(NMAX + 2), PZ = new Float32Array(NMAX + 2);
+const fr_ = function (x) { return x - Math.floor(x); };
+const hsh_ = function (i) { return fr_(Math.sin(i * 12.9898 + 78.233) * 43758.5453); };
+const lp_ = function (a, b, t) { return a + (b - a) * t; };
+const sm_ = function (t) { return t * t * (3 - 2 * t); };
+function rng_(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
-function buildLanes() {
-  const n = eng.cfg.lanes;
-  lanesEl.innerHTML = ''; laneEls = [];
-  for (let i = 0; i < n; i++) {
-    const lane = document.createElement('div');
-    lane.className = 'circuit-slot';
-    lanesEl.appendChild(lane);
-    laneEls.push({ lane: lane, assigned: null, ref: null, idx: i });
+/** Bangun lintasan: kelengkungan, bukit, arah (untuk peta mini). Deterministik per panjang. */
+function buildCourse(L) {
+  const total = Math.ceil((L + 900) / SEGL) + 4, r = rng_(20261111 + Math.round(L));
+  const curve = new Float32Array(total), hill = new Float32Array(total), heading = new Float32Array(total);
+  let i = 0;
+  const seg = function (n, c0, c1) { for (let k = 0; k < n && i < total; k++, i++) curve[i] = lp_(c0, c1, sm_(k / n)); };
+  seg(40, 0, 0);
+  while (i < total) {
+    const a = (0.012 + r() * 0.02) * (r() < 0.5 ? -1 : 1);
+    seg(10 + (r() * 10 | 0), 0, a); seg(10 + (r() * 30 | 0), a, a); seg(10 + (r() * 10 | 0), a, 0); seg(8 + (r() * 30 | 0), 0, 0);
   }
-  $('track').className = 'track circuit-mode theme-' + eng.cfg.tema;
-  setText($('stage-title'), 'Sirkuit Grand Prix ' + nf(eng.cfg.L) + ' m');
-  setText($('finish-tag'), 'START / FINISH ' + nf(eng.cfg.L) + 'M');
-  measureTrack();
+  let h = 0, x = 0, y = 0, minX = 0, maxX = 0, minY = 0, maxY = 0; const pts = [];
+  for (let k = 0; k < total; k++) {
+    const z = k * SEGL, tail = clamp((z - (L - 130)) / 90, 0, 1);       // lurus & datar menjelang finis
+    curve[k] *= 1 - tail;
+    hill[k] = (5 * Math.sin(k * 0.05) + 3.2 * Math.sin(k * 0.021 + 1.7)) * Math.min(1, z / 90) * (1 - clamp((z - (L - 110)) / 80, 0, 1));
+    h += curve[k] * HK; heading[k] = h;
+    if (z <= L + SEGL) { x += Math.cos(h) * SEGL; y += Math.sin(h) * SEGL; pts.push(x, y); minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+  }
+  const span = Math.max(maxX - minX, maxY - minY, 1), path = new Path2D();
+  const ox = (1 - (maxX - minX) / span) / 2, oy = (1 - (maxY - minY) / span) / 2, npt = [];
+  for (let k = 0; k < pts.length; k += 2) {
+    const nx = ox + (pts[k] - minX) / span, ny = oy + (pts[k + 1] - minY) / span; npt.push(nx, ny);
+    if (k === 0) path.moveTo(nx, ny); else path.lineTo(nx, ny);
+  }
+  course = { L: L, curve: curve, hill: hill, heading: heading, total: total, path: path, pts: npt };
 }
-function measureTrack() {
-  trackW = Math.max(300, lanesEl.clientWidth || 800);
-  const path = $('circuit-path');
-  if (path && path.getTotalLength) circuitLen = path.getTotalLength();
+function curveAt(i) { return i < 0 ? 0 : course.curve[Math.min(i, course.total - 1)]; }
+function hillAt(i) { return i < 0 ? 0 : course.hill[Math.min(i, course.total - 1)]; }
+function groundAt(z) { const k = z / SEGL, i = Math.floor(k); return lp_(hillAt(i), hillAt(i + 1), k - i); }
+function headingAt(z) { const i = clamp(Math.floor(z / SEGL), 0, course.total - 1); return course.heading[i]; }
+function miniAt(z) {                                                    // posisi di peta mini (0..1)
+  const n = course.pts.length / 2 - 1, k = clamp(z / course.L, 0, 1) * n, i = Math.floor(k), f = k - i, a = i * 2, b = Math.min(n, i + 1) * 2;
+  return [lp_(course.pts[a], course.pts[b], f), lp_(course.pts[a + 1], course.pts[b + 1], f)];
 }
-if (window.ResizeObserver) new ResizeObserver(measureTrack).observe(lanesEl);
 
-function makeCarEl(car) {
-  const el = document.createElement('div');
-  el.className = 'car'; el.style.setProperty('--car', WARNA[car.v.color]);
-  el.innerHTML = '<div class="tag"><b></b><i></i></div><div class="car-body"><span class="flame"></span><svg viewBox="0 0 120 50"><use href="#svg-car"/></svg><span class="car-no"></span></div><div class="car-meta"></div>';
-  const ref = { el: el, tag: el.querySelector('.tag'), body: el.querySelector('.car-body'), meta: el.querySelector('.car-meta'), name: el.querySelector('.tag b'), dist: el.querySelector('.tag i'), no: el.querySelector('.car-no') };
-  ref.no.textContent = '#' + pad2(car.no);
-  return ref;
+function buildLanes() {                                                 // dipanggil saat konfigurasi/sesi berubah
+  setText($('stage-title'), 'Lintasan ' + nf(eng.cfg.L) + ' m');
+  course = null; camZ = -18; camLat = 0; peakKmh = 0; resizeRoad();
 }
-function attachCar(L, car) { L.assigned = car; L.ref = makeCarEl(car); L.lane.appendChild(L.ref.el); }
-function releaseLane(L) { if (L.ref) L.ref.el.remove(); L.assigned = null; L.ref = null; }
+function resizeRoad() {
+  if (!roadWrap || !roadCv) return;
+  const w = roadWrap.clientWidth, h = roadWrap.clientHeight; if (w < 50 || h < 50) return;
+  DPR = Math.min(window.devicePixelRatio || 1, 1.5); RW = w; RH = h;
+  roadCv.width = Math.round(w * DPR); roadCv.height = Math.round(h * DPR);
+}
+const measureTrack = resizeRoad;
+if (window.ResizeObserver && roadWrap) new ResizeObserver(resizeRoad).observe(roadWrap);
 
-function assignLanes(rank) {
-  const n = laneEls.length, idx = new Map();
-  rank.forEach(function (c, i) { idx.set(c, i); });
-  laneEls.forEach(function (L) { if (L.assigned && !idx.has(L.assigned)) releaseLane(L); });
-  const have = new Set(); laneEls.forEach(function (L) { if (L.assigned) have.add(L.assigned); });
-  const top = rank.slice(0, n);
-  for (let k = 0; k < top.length; k++) {
-    const c = top[k];
-    if (have.has(c)) continue;
-    let L = laneEls.find(function (x) { return !x.assigned; });
-    if (!L) {                                                   // usir mobil terbelakang yang bukan top-n
-      let worst = null, wr = -1;
-      laneEls.forEach(function (x) { const r = idx.get(x.assigned); if (r >= n && r > wr) { wr = r; worst = x; } });
-      if (!worst) break;
-      have.delete(worst.assigned); releaseLane(worst); L = worst;
+// ── Posisi mobil di dunia ──
+function laneOf(c) { return (c.no - 1) % LANES_V; }
+function latOf(c, tSec) { return ((laneOf(c) / Math.max(1, LANES_V - 1)) * 2 - 1) * 0.82 + Math.sin(tSec * 0.8 + c.no * 1.7) * 0.035; }
+function worldZ(c, E, cfg) {
+  if (c.done) return cfg.L + 24 * (1 - Math.exp(-Math.max(0, E.t - (c.finishAt || E.t)) / 1.1)) + ((c.no * 7) % 5) * 0.8;
+  const row = Math.floor((c.no - 1) / LANES_V) % 7;                    // grid start berbaris; menyatu ke jalur setelah ±35 m
+  return c.d - row * 7 * Math.max(0, 1 - c.d / 35);
+}
+
+// ── Sprite ──
+const sh_ = {};
+function shade(hex, f) {
+  const k = hex + f; if (sh_[k]) return sh_[k];
+  const n = parseInt(hex.slice(1), 16), c = function (v) { return Math.max(0, Math.min(255, Math.round(v * f))); };
+  return (sh_[k] = 'rgb(' + c(n >> 16) + ',' + c((n >> 8) & 255) + ',' + c(n & 255) + ')');
+}
+function drawCar(ctx, x, y, w, col, nitro, tSec, no, lead) {
+  const h = w * 0.56;
+  ctx.fillStyle = 'rgba(0,0,0,.34)'; ctx.beginPath(); ctx.ellipse(x, y, w * 0.6, Math.max(1.5, w * 0.08), 0, 0, 6.3); ctx.fill();
+  if (w < 9) { ctx.fillStyle = col; ctx.fillRect(x - w / 2, y - h, w, h); return; }
+  if (nitro) {                                                         // api nitro
+    const fl = 0.75 + 0.25 * Math.sin(tSec * 60 + no), L2 = h * (0.5 + 0.4 * fl);
+    [-1, 1].forEach(function (s) {
+      const fx = x + s * w * 0.27;
+      ctx.fillStyle = 'rgba(77,195,255,.9)'; ctx.beginPath(); ctx.moveTo(fx - w * 0.07, y - h * 0.1); ctx.lineTo(fx, y - h * 0.1 + L2); ctx.lineTo(fx + w * 0.07, y - h * 0.1); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(fx - w * 0.035, y - h * 0.1); ctx.lineTo(fx, y - h * 0.1 + L2 * 0.55); ctx.lineTo(fx + w * 0.035, y - h * 0.1); ctx.fill();
+    });
+  }
+  ctx.fillStyle = '#07070f';                                           // roda
+  ctx.fillRect(x - w * 0.5, y - h * 0.38, w * 0.17, h * 0.38); ctx.fillRect(x + w * 0.33, y - h * 0.38, w * 0.17, h * 0.38);
+  ctx.fillStyle = col;                                                 // bodi
+  ctx.beginPath(); ctx.moveTo(x - w * 0.46, y - h * 0.08); ctx.lineTo(x + w * 0.46, y - h * 0.08); ctx.lineTo(x + w * 0.42, y - h * 0.56); ctx.lineTo(x - w * 0.42, y - h * 0.56); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.fillRect(x - w * 0.46, y - h * 0.22, w * 0.92, h * 0.14);
+  ctx.fillStyle = shade(col, 0.72);                                    // kabin
+  ctx.beginPath(); ctx.moveTo(x - w * 0.3, y - h * 0.55); ctx.lineTo(x + w * 0.3, y - h * 0.55); ctx.lineTo(x + w * 0.21, y - h * 0.92); ctx.lineTo(x - w * 0.21, y - h * 0.92); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(190,230,255,.88)';
+  ctx.beginPath(); ctx.moveTo(x - w * 0.25, y - h * 0.59); ctx.lineTo(x + w * 0.25, y - h * 0.59); ctx.lineTo(x + w * 0.18, y - h * 0.86); ctx.lineTo(x - w * 0.18, y - h * 0.86); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = shade(col, 0.55); ctx.fillRect(x - w * 0.42, y - h * 1.02, w * 0.84, h * 0.09);     // spoiler
+  ctx.fillRect(x - w * 0.3, y - h * 0.93, w * 0.05, h * 0.09); ctx.fillRect(x + w * 0.25, y - h * 0.93, w * 0.05, h * 0.09);
+  ctx.fillStyle = '#ff2d4d'; ctx.fillRect(x - w * 0.42, y - h * 0.46, w * 0.2, h * 0.1); ctx.fillRect(x + w * 0.22, y - h * 0.46, w * 0.2, h * 0.1);   // lampu belakang
+  if (w > 28) { ctx.fillStyle = 'rgba(255,45,77,.28)'; ctx.fillRect(x - w * 0.48, y - h * 0.52, w * 0.32, h * 0.22); ctx.fillRect(x + w * 0.16, y - h * 0.52, w * 0.32, h * 0.22); }
+  if (w > 60) {                                                        // pelat nomor
+    ctx.fillStyle = '#f4f4ff'; ctx.fillRect(x - w * 0.12, y - h * 0.34, w * 0.24, h * 0.13);
+    ctx.fillStyle = '#0e0533'; ctx.font = '800 ' + Math.round(h * 0.11) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(no), x, y - h * 0.275);
+  }
+  if (lead) { ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = Math.max(1, w * 0.02); ctx.strokeRect(x - w * 0.47, y - h * 1.03, w * 0.94, h * 1.03); }
+}
+function drawObj(ctx, th, x, y, h, v) {                                // objek tepi jalan per tema
+  if (h < 3) return;
+  if (th.obj === 'pine') {
+    ctx.fillStyle = '#5a3a22'; ctx.fillRect(x - h * 0.04, y - h * 0.2, h * 0.08, h * 0.2);
+    for (let k = 0; k < 3; k++) { ctx.fillStyle = k % 2 ? th.c2 : th.c1; const bw = h * (0.34 - k * 0.07), by = y - h * (0.18 + k * 0.26); ctx.beginPath(); ctx.moveTo(x - bw, by); ctx.lineTo(x, by - h * 0.4); ctx.lineTo(x + bw, by); ctx.fill(); }
+  } else if (th.obj === 'cactus') {
+    ctx.fillStyle = th.c1; ctx.fillRect(x - h * 0.06, y - h * 0.75, h * 0.12, h * 0.75); ctx.fillRect(x - h * 0.22, y - h * 0.5, h * 0.16, h * 0.07); ctx.fillRect(x - h * 0.22, y - h * 0.6, h * 0.07, h * 0.17); ctx.fillRect(x + h * 0.06, y - h * 0.4, h * 0.16, h * 0.07); ctx.fillRect(x + h * 0.15, y - h * 0.52, h * 0.07, h * 0.19);
+  } else if (th.obj === 'candy') {
+    ctx.fillStyle = '#fff'; ctx.fillRect(x - h * 0.025, y - h * 0.6, h * 0.05, h * 0.6);
+    ctx.fillStyle = v > 0.5 ? th.c1 : th.c2; ctx.beginPath(); ctx.arc(x, y - h * 0.72, h * 0.24, 0, 6.3); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.beginPath(); ctx.arc(x - h * 0.07, y - h * 0.78, h * 0.07, 0, 6.3); ctx.fill();
+  } else {
+    ctx.fillStyle = '#1b2638'; ctx.fillRect(x - h * 0.025, y - h * 0.85, h * 0.05, h * 0.85);
+    ctx.fillStyle = v > 0.5 ? th.c1 : th.c2; ctx.fillRect(x - h * 0.06, y - h * 0.88, h * 0.12, h * 0.06);
+    ctx.fillStyle = 'rgba(77,225,255,.18)'; ctx.beginPath(); ctx.arc(x, y - h * 0.85, h * 0.14, 0, 6.3); ctx.fill();
+  }
+}
+function ridge_(x, s) { return 0.55 * Math.sin(x * 1.3 + s) + 0.3 * Math.sin(x * 2.9 + s * 2.1) + 0.15 * Math.sin(x * 6.1 + s * 3.7); }
+function drawSky(ctx, th, W, H, hz, hd) {
+  const g = ctx.createLinearGradient(0, 0, 0, hz); g.addColorStop(0, th.sky[0]); g.addColorStop(0.62, th.sky[1]); g.addColorStop(1, th.sky[2]);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, hz + 2);
+  const off = hd * W * 0.55;
+  if (th.obj === 'candy') {                                            // pelangi
+    ['#ff5d5d', '#ffa23f', '#ffe14d', '#5fe38a', '#4dc3ff', '#9a7bff'].forEach(function (c, k) { ctx.strokeStyle = c; ctx.globalAlpha = 0.5; ctx.lineWidth = H * 0.016; ctx.beginPath(); ctx.arc(W * 0.3 - off * 0.15, hz + H * 0.08, H * (0.36 - k * 0.017), Math.PI, 0); ctx.stroke(); });
+    ctx.globalAlpha = 1;
+  }
+  const sx = ((W * 0.72 - off * 0.2) % W + W) % W;
+  const sg = ctx.createRadialGradient(sx, hz * 0.62, 0, sx, hz * 0.62, H * 0.17); sg.addColorStop(0, th.sun); sg.addColorStop(0.35, th.sun); sg.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.globalAlpha = 0.9; ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(sx, hz * 0.62, H * 0.17, 0, 6.3); ctx.fill(); ctx.globalAlpha = 1;
+  [[th.far, 0.5, H * 0.2, 150, 1.3], [th.near, 0.9, H * 0.13, 95, 4.1]].forEach(function (L) {
+    ctx.fillStyle = L[0]; ctx.beginPath(); ctx.moveTo(0, hz + 2);
+    for (let x = 0; x <= W + 10; x += 10) ctx.lineTo(x, hz - L[2] * (0.45 + 0.55 * (0.5 + 0.5 * ridge_((x + off * L[1]) / L[3], L[4]))));
+    ctx.lineTo(W + 10, hz + 2); ctx.closePath(); ctx.fill();
+  });
+}
+function quad(ctx, x1, y1, w1, x2, y2, w2) { ctx.beginPath(); ctx.moveTo(x1 - w1, y1); ctx.lineTo(x1 + w1, y1); ctx.lineTo(x2 + w2, y2); ctx.lineTo(x2 - w2, y2); ctx.closePath(); ctx.fill(); }
+function checker(ctx, x1, y1, w1, x2, y2, w2) {                        // garis start/finis berkotak
+  const cols = 14;
+  for (let r = 0; r < 2; r++) for (let c = 0; c < cols; c++) {
+    if (((r + c) & 1) === 0) continue;
+    const ta = r / 2, tb = (r + 1) / 2, ua = c / cols * 2 - 1, ub = (c + 1) / cols * 2 - 1;
+    const xa1 = lp_(x1, x2, ta), ya = lp_(y1, y2, ta), wa = lp_(w1, w2, ta), xb = lp_(x1, x2, tb), yb = lp_(y1, y2, tb), wb = lp_(w1, w2, tb);
+    ctx.beginPath(); ctx.moveTo(xa1 + ua * wa, ya); ctx.lineTo(xa1 + ub * wa, ya); ctx.lineTo(xb + ub * wb, yb); ctx.lineTo(xb + ua * wb, yb); ctx.closePath(); ctx.fill();
+  }
+}
+function ordinal(n) { const s = ['TH', 'ST', 'ND', 'RD'], v = n % 100; return s[(v - 20) % 10] || s[v] || s[0]; }
+function rrect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+
+function adaptQuality(dt) {
+  avgDt += (dt - avgDt) * 0.05;
+  if (avgDt > 0.034 && Q.n > 70) Q.n -= 5; else if (avgDt < 0.02 && Q.n < 150) Q.n += 2;
+}
+
+function renderFrame(ms) {
+  if (!rctx) return;
+  const dt = clamp((ms - lastRT) / 1000, 0.001, 0.1); lastRT = ms; adaptQuality(dt);
+  const E = eng.E, cfg = eng.cfg, rank = eng.ranking(), ctx = rctx, tSec = ms / 1000;
+  if (!course || course.L !== cfg.L) buildCourse(cfg.L);
+  LANES_V = clamp(+cfg.lanes || 6, 3, 8);
+  const th = TEMA[cfg.tema] || TEMA.cyber, W = RW, H = RH, hz = H * 0.42, N = Q.n;
+  if (E.state === 'idle' && !rank.length) peakKmh = 0;
+
+  // ── Kamera: ikuti pembalap sorotan (default juara 1), mundur lebih jauh bila barisan melebar ──
+  let focus = focusNo ? rank.find(function (c) { return c.no === focusNo; }) : null;
+  if (!focus) { focusNo = 0; focus = rank[0] || null; }
+  const fz = focus ? worldZ(focus, E, cfg) : 0;
+  let back = 13;
+  if (focus && focus === rank[0] && rank.length > 1) { const k = Math.min(rank.length, 6); back += Math.min(8, (rank[0].d - rank[k - 1].d) * 0.1); }
+  const target = clamp(fz - back, -18, cfg.L - 24);       // kamera berhenti sebelum garis finis → gerbang tetap terlihat
+  if (Math.abs(target - camZ) > 160) camZ = target;
+  else { if (focus && !focus.done) camZ += focus.vel * dt; camZ += (target - camZ) * (1 - Math.exp(-dt * 5)); }   // + prediksi kecepatan: kamera tidak tertinggal
+  camLat += ((focus ? latOf(focus, tSec) * 0.55 : 0) - camLat) * (1 - Math.exp(-dt * 4));
+  const fNitro = !!(focus && focus.nitros.length);
+  fovD += ((fNitro ? 0.98 : 1.15) - fovD) * (1 - Math.exp(-dt * 6));
+  const camX = camLat * ROAD_W, camY = CAM_H + groundAt(camZ);
+  const shake = (fNitro && !REDUCE) ? (Math.random() - 0.5) * 2.2 : 0;
+
+  ctx.setTransform(DPR, 0, 0, DPR, 0, shake * DPR);
+  ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+  drawSky(ctx, th, W, H, hz, headingAt(camZ));
+  ctx.fillStyle = th.g1; ctx.fillRect(0, hz, W, H - hz + 4);
+
+  // ── Proyeksi segmen (dekat → jauh) ──
+  const base = Math.floor(camZ / SEGL), pct = (camZ - base * SEGL) / SEGL, hw = W / 2;
+  let x = 0, dx = -curveAt(base) * pct, n0 = 0;
+  for (let n = 0; n <= N; n++) {
+    const i = base + n, pz = i * SEGL - camZ, sc = fovD / Math.max(pz, 0.01);
+    PZ[n] = pz; SC[n] = sc; PX[n] = hw + sc * (x - camX) * hw; PY[n] = hz - sc * (hillAt(i) - camY) * hw; PW[n] = sc * ROAD_W * hw;
+    if (pz < 0.6) n0 = n + 1;
+    x += dx; dx += curveAt(i);
+  }
+
+  // ── Kelompokkan mobil per segmen ──
+  const buckets = new Array(N + 1);
+  for (let k = 0; k < rank.length; k++) {
+    const c = rank[k], z = worldZ(c, E, cfg), n = Math.floor(z / SEGL) - base;
+    if (n < n0 || n >= N) continue;
+    (buckets[n] || (buckets[n] = [])).push({ c: c, z: z, i: k });
+  }
+  const tags = [], startSeg = Math.floor(0 / SEGL) - base, finSeg = Math.floor(cfg.L / SEGL) - base;
+
+  // ── Gambar jauh → dekat (algoritma pelukis) ──
+  for (let n = N - 1; n >= n0; n--) {
+    const i = base + n, y1 = PY[n], y2 = PY[n + 1];
+    if (y1 <= y2) continue;                                            // sisi belakang bukit
+    const alt = (Math.floor(i / 3)) & 1, x1 = PX[n], x2 = PX[n + 1], w1 = PW[n], w2 = PW[n + 1];
+    ctx.fillStyle = alt ? th.g1 : th.g2; ctx.fillRect(0, y2 - 0.5, W, y1 - y2 + 1.5);
+    ctx.fillStyle = alt ? th.rum1 : th.rum2; quad(ctx, x1, y1 + 0.5, w1 * 1.13, x2, y2, w2 * 1.13);
+    ctx.fillStyle = alt ? th.r1 : th.r2; quad(ctx, x1, y1 + 0.5, w1, x2, y2, w2);
+    if ((i % 6 + 6) % 6 < 3) { ctx.fillStyle = th.lane; ctx.globalAlpha = 0.75; quad(ctx, x1, y1, w1 * 0.018, x2, y2, w2 * 0.018); ctx.globalAlpha = 1; }
+    if (n === startSeg || n === finSeg) { ctx.fillStyle = '#f4f4ff'; checker(ctx, x1, y1, w1, x2, y2, w2); }
+    // objek tepi jalan
+    if (i > 2 && i % 4 === 0 && i * SEGL < cfg.L + 400) {
+      const sc = SC[n], hh = (9 + hsh_(i) * 6) * sc * hw;
+      drawObj(ctx, th, x1 - (ROAD_W + 5 + hsh_(i + 7) * 15) * sc * hw, y1, hh, hsh_(i + 3));
+      drawObj(ctx, th, x1 + (ROAD_W + 5 + hsh_(i + 11) * 15) * sc * hw, y1, hh, hsh_(i + 5));
     }
-    attachCar(L, c); have.add(c);
+    // gerbang finis
+    if (n === finSeg) {
+      const sc = SC[n], gh = 11 * sc * hw, gx1 = x1 - w1 * 1.18, gx2 = x1 + w1 * 1.18;
+      ctx.fillStyle = '#e8e8f5'; ctx.fillRect(gx1 - gh * 0.05, y1 - gh, gh * 0.1, gh); ctx.fillRect(gx2 - gh * 0.05, y1 - gh, gh * 0.1, gh);
+      const bw = gx2 - gx1, bh = gh * 0.28, bs = Math.max(2, bh / 2);
+      for (let r = 0; r < 2; r++) for (let c = 0, cn = Math.max(6, Math.round(bw / bs)); c < cn; c++) { ctx.fillStyle = ((r + c) & 1) ? '#0b0b14' : '#f4f4ff'; ctx.fillRect(gx1 + c * bw / cn, y1 - gh - bh + r * bh / 2, bw / cn + 0.5, bh / 2 + 0.5); }
+      if (bh > 14) { ctx.fillStyle = '#ffd23f'; ctx.font = '800 ' + Math.round(bh * 0.5) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('FINISH', x1, y1 - gh - bh * 1.8); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; }
+    }
+    // mobil pada segmen ini
+    const bk = buckets[n];
+    if (bk) {
+      bk.sort(function (a, b) { return b.z - a.z; });
+      for (let q = 0; q < bk.length; q++) {
+        const o = bk[q], t = (o.z - i * SEGL) / SEGL, sc = lp_(SC[n], SC[n + 1], t);
+        const cx = lp_(x1, x2, t) + latOf(o.c, tSec) * ROAD_W * sc * hw, cy = lp_(y1, y2, t), cw = CAR_UNITS * sc * hw;
+        drawCar(ctx, cx, cy, cw, WARNA[o.c.v.color], o.c.nitros.length > 0, tSec, o.c.no, o.i === 0 && E.state !== 'idle');
+        if (cw > 26) tags.push({ x: cx, y: cy - cw * 0.6 - 4, w: cw, c: o.c, lead: o.i === 0, f: o.c === focus });
+      }
+    }
   }
+
+  // ── Kabut tipis di cakrawala, garis kecepatan, vinyet ──
+  const hzg = ctx.createLinearGradient(0, hz - H * 0.04, 0, hz + H * 0.2); hzg.addColorStop(0, th.haze); hzg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.globalAlpha = 0.5; ctx.fillStyle = hzg; ctx.fillRect(0, hz - H * 0.04, W, H * 0.24); ctx.globalAlpha = 1;
+  const kmh = focus ? Math.round(focus.vel * SKALA) : 0; peakKmh = Math.max(peakKmh, kmh);
+  if (!REDUCE && focus && E.state === 'running' && (fNitro || kmh > 150)) {
+    ctx.strokeStyle = fNitro ? 'rgba(160,225,255,.35)' : 'rgba(255,255,255,.14)'; ctx.lineWidth = 1.5; ctx.beginPath();
+    for (let k = 0; k < 16; k++) {
+      const a = (k / 16) * 6.283 + 0.2, ph = fr_(tSec * 2.4 + k * 0.37), r0 = H * (0.25 + ph * 0.5), r1 = r0 + H * 0.08 * (0.4 + ph);
+      ctx.moveTo(W / 2 + Math.cos(a) * r0 * 1.5, hz + Math.sin(a) * r0 * 0.9); ctx.lineTo(W / 2 + Math.cos(a) * r1 * 1.5, hz + Math.sin(a) * r1 * 0.9);
+    }
+    ctx.stroke();
+  }
+  const vg = ctx.createRadialGradient(W / 2, H * 0.55, H * 0.45, W / 2, H * 0.55, H * 1.0); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(4,2,20,.45)');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  // ── Label nama di atas mobil terdekat ──
+  tags.sort(function (a, b) { return b.w - a.w; });
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let k = 0; k < Math.min(tags.length, 10); k++) {
+    const g = tags[k], fs = clamp(g.w * 0.12, 9, 15), nm = '@' + g.c.v.u, txt = nm.length > 13 ? nm.slice(0, 12) + '…' : nm;
+    ctx.font = '700 ' + fs + 'px "Space Grotesk",Inter,sans-serif';
+    const tw = ctx.measureText(txt).width + fs * 1.1, th2 = fs * 1.55;
+    ctx.fillStyle = g.f ? '#2D7DFF' : g.lead ? '#ffb800' : 'rgba(8,6,32,.72)'; rrect(ctx, g.x - tw / 2, g.y - th2, tw, th2, th2 / 2); ctx.fill();
+    ctx.fillStyle = g.lead && !g.f ? '#241a00' : '#fff'; ctx.fillText((g.lead ? '♛ ' : '') + txt, g.x, g.y - th2 / 2 + 0.5);
+  }
+  drawHud(ctx, E, cfg, rank, focus, kmh, W, H, tSec);
 }
 
-function renderFrame() {
-  const cfg = eng.cfg, path = $('circuit-path'), svg = $('circuit-svg');
-  if (!path || !svg) return;
-  if (!circuitLen) circuitLen = path.getTotalLength();
-  const rect = svg.getBoundingClientRect();
-  if (!rect.width || !rect.height) return;
-
-  // Skala viewBox (1000x540) dengan preserveAspectRatio="xMidYMid meet"
-  const scale = Math.min(rect.width / 1000, rect.height / 540);
-  const offX = (rect.width - 1000 * scale) / 2;
-  const offY = (rect.height - 540 * scale) / 2;
-  const startOffset = 0.085; // Posisi garis Start/Finish pada path SVG
-
-  for (let i = 0; i < laneEls.length; i++) {
-    const L = laneEls[i];
-    if (!L.assigned) continue;
-    const prog = ((L.assigned.d / cfg.L) + startOffset) % 1;
-    const dist = prog * circuitLen;
-    const pt = path.getPointAtLength(dist);
-    const pt2 = path.getPointAtLength((dist + 4) % circuitLen);
-    const angle = Math.atan2(pt2.y - pt.y, pt2.x - pt.x);
-
-    // Sebar mobil sedikit ke sisi dalam/luar jalur agar tidak saling menumpuk penuh
-    const laneShift = (i - (laneEls.length - 1) / 2) * 6;
-    const nx = -Math.sin(angle) * laneShift;
-    const ny = Math.cos(angle) * laneShift;
-
-    const x = offX + (pt.x + nx) * scale;
-    const y = offY + (pt.y + ny) * scale;
-    const deg = (angle * 180 / Math.PI).toFixed(1);
-
-    L.ref.el.style.transform = 'translate3d(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px,0)';
-    L.ref.body.style.transform = 'rotate(' + deg + 'deg)';
+function drawHud(ctx, E, cfg, rank, focus, kmh, W, H, tSec) {
+  const u = clamp(H / 450, 0.7, 1.7), pad = 12 * u, F = function (px, wt) { return (wt || 700) + ' ' + Math.round(px * u) + 'px "Space Grotesk",Inter,sans-serif'; };
+  ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+  // Pewaktu + jarak (kiri atas)
+  const bw = 168 * u, bh = 52 * u, lead = rank[0], prog = clamp((lead ? lead.d : 0) / cfg.L, 0, 1);
+  ctx.fillStyle = 'rgba(8,6,32,.66)'; rrect(ctx, pad, pad, bw, bh, 10 * u); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = F(22, 800); ctx.fillText(fmtTime(E.t), pad + 10 * u, pad + 25 * u);
+  ctx.fillStyle = '#9fb4ff'; ctx.font = F(10, 700); ctx.fillText('JARAK ' + Math.round(lead ? lead.d : 0) + ' / ' + nf(cfg.L) + ' M', pad + 10 * u, pad + 39 * u);
+  ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fillRect(pad + 10 * u, pad + 44 * u, bw - 20 * u, 3 * u);
+  ctx.fillStyle = '#ffd23f'; ctx.fillRect(pad + 10 * u, pad + 44 * u, (bw - 20 * u) * prog, 3 * u);
+  // Papan peringkat (kiri)
+  const rows = Math.min(rank.length, W < 520 ? 5 : 10), rh = 19 * u, lw = Math.min(W * 0.34, 176 * u), ly = pad + bh + 8 * u;
+  if (rows) {
+    ctx.fillStyle = 'rgba(8,6,32,.6)'; rrect(ctx, pad, ly, lw, rows * rh + 8 * u, 10 * u); ctx.fill();
+    for (let k = 0; k < rows; k++) {
+      const c = rank[k], ry = ly + 4 * u + k * rh, isF = c === focus;
+      if (isF) { ctx.fillStyle = 'rgba(45,125,255,.55)'; rrect(ctx, pad + 3 * u, ry, lw - 6 * u, rh - 1, 6 * u); ctx.fill(); }
+      ctx.fillStyle = k === 0 ? '#ffd23f' : '#c9d3ff'; ctx.font = F(10, 800); ctx.textAlign = 'right'; ctx.fillText(String(k + 1), pad + 19 * u, ry + rh * 0.68);
+      ctx.fillStyle = WARNA[c.v.color]; ctx.fillRect(pad + 24 * u, ry + 4 * u, 8 * u, rh - 9 * u);
+      ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.font = F(10, 600);
+      let nm = '@' + c.v.u; const mx = lw - 78 * u; while (nm.length > 3 && ctx.measureText(nm).width > mx) nm = nm.slice(0, -2) + '…';
+      ctx.fillText(nm, pad + 37 * u, ry + rh * 0.68);
+      ctx.textAlign = 'right'; ctx.fillStyle = c.done ? '#2EE59D' : c.nitros.length ? '#4dc3ff' : '#9fb4ff'; ctx.font = F(9, 700);
+      ctx.fillText(c.done ? 'FINISH' : k === 0 ? 'LEAD' : '-' + Math.round(lead.d - c.d) + 'm', pad + lw - 7 * u, ry + rh * 0.68);
+    }
+    ctx.textAlign = 'left';
   }
+  // Peta lintasan mini (kanan atas)
+  const ms = clamp(H * 0.3, 80, 160) * (u > 1.2 ? 1.1 : 1), mx0 = W - ms - pad, my0 = pad;
+  ctx.fillStyle = 'rgba(8,6,32,.6)'; rrect(ctx, mx0, my0, ms, ms, 12 * u); ctx.fill();
+  const inner = ms - 22 * u; ctx.save(); ctx.translate(mx0 + 11 * u, my0 + 11 * u); ctx.scale(inner, inner);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(255,255,255,.2)'; ctx.lineWidth = 9 / inner * u; ctx.stroke(course.path);
+  ctx.strokeStyle = '#7f8cc0'; ctx.lineWidth = 4.5 / inner * u; ctx.stroke(course.path); ctx.restore();
+  const dot = function (z, col, r) { const p = miniAt(z); ctx.fillStyle = col; ctx.beginPath(); ctx.arc(mx0 + 11 * u + p[0] * inner, my0 + 11 * u + p[1] * inner, r * u, 0, 6.3); ctx.fill(); };
+  dot(cfg.L, '#f4f4ff', 4); dot(0, '#2EE59D', 3.5);
+  for (let k = Math.min(rank.length, 40) - 1; k >= 0; k--) { const c = rank[k]; if (c !== focus) dot(c.d, WARNA[c.v.color], k === 0 ? 3.6 : 2.4); }
+  if (focus) dot(focus.d, '#ffffff', 4.6);
+  // Speedometer + posisi (kanan bawah)
+  const R = clamp(H * 0.14, 44, 82), gx = W - R - pad - 6 * u, gy = H - R - pad - 4 * u, gmax = Math.max(160, Math.ceil(Math.max(cfg.capNatKmh * 1.4, peakKmh * 1.1) / 20) * 20);
+  const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25, fr = clamp(kmh / gmax, 0, 1);
+  ctx.fillStyle = 'rgba(8,6,32,.66)'; ctx.beginPath(); ctx.arc(gx, gy, R + 6 * u, 0, 6.3); ctx.fill();
+  ctx.lineCap = 'round'; ctx.lineWidth = 7 * u; ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.beginPath(); ctx.arc(gx, gy, R - 4 * u, a0, a1); ctx.stroke();
+  const gg = ctx.createLinearGradient(gx - R, gy, gx + R, gy); gg.addColorStop(0, '#2D7DFF'); gg.addColorStop(0.6, '#ffd23f'); gg.addColorStop(1, '#ff4d2e');
+  ctx.strokeStyle = gg; ctx.beginPath(); ctx.arc(gx, gy, R - 4 * u, a0, a0 + (a1 - a0) * fr + 0.001); ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = F(R * 0.5 / u, 800); ctx.fillText(String(kmh), gx, gy + R * 0.14);
+  ctx.fillStyle = '#9fb4ff'; ctx.font = F(9, 700); ctx.fillText('KM/H', gx, gy + R * 0.42);
+  const pos = focus ? rank.indexOf(focus) + 1 : 0;
+  if (pos) {
+    ctx.fillStyle = pos === 1 ? '#ffd23f' : '#fff'; ctx.font = F(34, 800); ctx.textAlign = 'right';
+    const pt = String(pos); ctx.fillText(pt, gx - R - 22 * u, gy + R * 0.3);
+    ctx.font = F(12, 800); ctx.textAlign = 'left'; ctx.fillText(ordinal(pos), gx - R - 20 * u, gy + R * 0.3 - 14 * u);
+    ctx.fillStyle = '#9fb4ff'; ctx.font = F(9, 700); ctx.textAlign = 'right'; ctx.fillText('/ ' + rank.length, gx - R - 22 * u, gy + R * 0.3 + 13 * u);
+  }
+  // Label sorotan manual
+  if (focusNo && focus) {
+    ctx.textAlign = 'left'; ctx.font = F(10, 700); const t = 'SOROTAN: @' + focus.v.u + ' · klik lagi di papan untuk kembali ke juara 1', tw = ctx.measureText(t).width + 18 * u;
+    ctx.fillStyle = 'rgba(45,125,255,.85)'; rrect(ctx, pad, H - pad - 22 * u, Math.min(tw, W * 0.6), 22 * u, 11 * u); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fillText(t.length > 60 && W < 700 ? 'SOROTAN: @' + focus.v.u : t, pad + 9 * u, H - pad - 7 * u);
+  }
+  ctx.textAlign = 'left';
 }
 
 let lastSlow = 0;
 function renderSlow() {
   const E = eng.E, cfg = eng.cfg, rank = eng.ranking(), st = eng.stats();
-  assignLanes(rank);
-  rank.forEach(function (c, i) {
-    const L = laneEls.find(function (x) { return x.assigned === c; });
-    if (!L) return;
-    L.ref.el.classList.toggle('lead', i === 0);
-    const nit = c.nitros.length > 0;
-    L.ref.el.classList.toggle('nitro', nit);
-    setText(L.ref.name, (i === 0 && E.state !== 'idle' ? '♛ ' : '') + '@' + c.v.u);
-    setText(L.ref.dist, Math.round(c.d) + 'm');
-    setText(L.ref.meta, c.done ? 'FINISH' : (E.state === 'idle' || E.state === 'countdown' ? 'SIAP' : Math.round(c.vel * SKALA) + ' KM/H' + (nit ? ' · NITRO' : '')));
-  });
   // HUD
   const stTxt = { idle: rank.length ? 'Siap start' : 'Menunggu pemain', countdown: 'Bersiap…', running: 'Balapan berlangsung', paused: 'Dijeda', finishing: 'Finis!', finished: 'Selesai' }[E.state];
   setText($('hud-status-txt'), stTxt);
@@ -718,11 +964,10 @@ function renderSlow() {
     renderSlow.sig = sig;
     $('board-list').innerHTML = top.length ? top.map(function (c, i) {
       const gap = i === 0 ? 'JARAK' : '-' + Math.round(top[0].d - c.d) + 'm';
-      return '<div class="rk p' + (i + 1) + '"><div class="row gap8" style="min-width:0"><span class="rk-pos">' + (i < 3 ? 'P' : '') + (i + 1) + '</span><div class="col" style="min-width:0"><span class="rk-name truncate">@' + esc(c.v.u) + '</span><span class="caps-xs ' + (c.nitros.length ? 't-tertiary' : 'faint') + '">' +
+      return '<div class="rk p' + (i + 1) + (c.no === focusNo ? ' focus' : '') + '" data-no="' + c.no + '" role="button" tabindex="0" title="Klik untuk menyorot pembalap ini"><div class="row gap8" style="min-width:0"><span class="rk-pos">' + (i < 3 ? 'P' : '') + (i + 1) + '</span><div class="col" style="min-width:0"><span class="rk-name truncate">@' + esc(c.v.u) + '</span><span class="caps-xs ' + (c.nitros.length ? 't-tertiary' : 'faint') + '">' +
         (c.done ? 'FINISH' : c.nitros.length ? 'NITRO AKTIF' : Math.round(c.vel * SKALA) + ' KM/H') + '</span></div></div><div class="col" style="align-items:flex-end"><span class="rk-dist">' + Math.round(c.d) + 'm</span><span class="caps-xs faint">' + gap + '</span></div></div>';
     }).join('') : '<div class="empty">Belum ada pembalap</div>';
   }
-  renderMinimap(rank);
   setText($('tk-state'), E.frenzyUntil > E.t && E.state === 'running' ? 'x2 FRENZY AKTIF' : 'x1');
   setText($('ticker'), S.tick || 'Belum ada gift.');
   // ETA
@@ -738,22 +983,11 @@ function renderSlow() {
   let best = 0; E.viewers.forEach(function (v) { if (!v.booked && v.ticket > best) best = v.ticket; });
   $('cta-join-bar').style.width = Math.min(100, best / cfg.tiket * 100) + '%';
 }
-function renderMinimap(rank) {
-  const n = Math.min(rank.length, 300), usable = 100;
-  while (mapEls.length < n) { const i = document.createElement('i'); $('minimap').appendChild(i); mapEls.push(i); }
-  for (let i = 0; i < mapEls.length; i++) {
-    const el = mapEls[i];
-    if (i >= n) { el.style.display = 'none'; continue; }
-    el.style.display = ''; el.style.left = (rank[i].d / eng.cfg.L * (usable - 1.2)) + '%'; el.className = i < laneEls.length ? 'top' : '';
-  }
-}
 function showNitroToast(info) {
-  if (!info.car) return;
-  const L = laneEls.find(function (x) { return x.assigned === info.car; });
-  if (!L || !L.ref) return;
-  const t = document.createElement('div'); t.className = 'nitro-toast';
+  if (!info.car || !roadWrap) return;
+  const t = document.createElement('div'); t.className = 'road-toast';
   t.textContent = (info.rep > 1 ? info.rep + '× ' : '') + info.rule.jenis_gift.split('|')[0].toUpperCase() + ' BOOST! (@' + info.v.u + ')';
-  L.ref.el.appendChild(t); setTimeout(function () { t.remove(); }, 2500);
+  roadWrap.appendChild(t); setTimeout(function () { t.remove(); }, 2500);
 }
 
 // ── Podium ──
@@ -821,13 +1055,6 @@ function syncButtons() {
   $('btn-pause').disabled = !(s === 'running'); $('btn-stop').disabled = !(run || s === 'paused');
   $('btn-reset').disabled = false; $('btn-clear').disabled = false;
   ['qb-all', 'qb-pack', 'qb-frenzy'].forEach(function (id) { $(id).disabled = !(s === 'running'); });
-  // Sinkronkan tombol di Mode Siaran
-  if ($('obs-btn-start')) {
-    $('obs-btn-start').disabled = !(s === 'idle' || s === 'paused');
-    setText($('obs-start-txt'), s === 'paused' ? 'Lanjut' : 'Mulai');
-    $('obs-btn-pause').disabled = !(s === 'running');
-    $('obs-btn-stop').disabled = !(run || s === 'paused');
-  }
   void act;
 }
 function connUI() {
@@ -1146,7 +1373,7 @@ const Konektor = {
       if (Konektor.ws !== ws) return;
       if (!Konektor.pernahBuka && Konektor.want && !Konektor.peringatan) {
         Konektor.peringatan = true;
-        toast('Belum bisa menyambung ke ' + url + '. Pastikan konektor (node konektor.js) berjalan di PC INI.', 'warning', 12000);
+        toast('Belum bisa menyambung ke ' + url + '. Pastikan konektor (node konektor.js) berjalan di PC INI. Jika browser menanyakan izin "akses jaringan lokal / local network", pilih Izinkan (ikon gembok di address bar → Setelan situs).', 'warning', 12000);
         logEvent('wifi_off', 'Konektor belum terjangkau', url, 'warn');
       }
       if (S.conn === 'ws') { S.conn = 'lost'; connUI(); logEvent('wifi_off', 'Konektor terputus', 'Arena tetap berjalan. Mencoba menyambung ulang…', 'warn'); toast('Koneksi TikTok Live terputus — arena tetap berjalan.', 'warning'); }
@@ -1179,14 +1406,12 @@ function simStart() {
       if (pool.length) { const w = pool.filter(function () { return Math.random() < 0.6; }), r = (w.length ? w : pool)[Math.floor(Math.random() * (w.length || pool.length))]; eng.gift(b.u, b.n, r.jenis_gift.split('|')[0], r.nilai_koin, Math.random() < .2 ? 1 + Math.floor(Math.random() * 5) : 1); }
     }
   }, 250);
-  if ($('obs-sim-txt')) setText($('obs-sim-txt'), 'Sim: On');
   connUI(); renderSideSession();
 }
 function simStop() {
   S.sim.on = false; clearInterval(S.sim.timer);
   if (eng.state === 'idle') S.demo = false;
   if (S.conn === 'demo') { S.conn = 'off'; S.connSrc = '—'; }
-  if ($('obs-sim-txt')) setText($('obs-sim-txt'), 'Sim: Off');
   connUI(); renderSideSession();
 }
 
@@ -1256,18 +1481,6 @@ function bind() {
   $('btn-start').addEventListener('click', cmdStart); $('btn-pause').addEventListener('click', function () { eng.pause(); });
   $('btn-stop').addEventListener('click', cmdStop); $('btn-reset').addEventListener('click', cmdReset); $('btn-clear').addEventListener('click', cmdClear);
   $('btn-emergency').addEventListener('click', cmdClear);
-  // Kontrol cepat di Mode Siaran
-  if ($('obs-btn-start')) {
-    $('obs-btn-start').addEventListener('click', cmdStart);
-    $('obs-btn-pause').addEventListener('click', function () { eng.pause(); });
-    $('obs-btn-stop').addEventListener('click', cmdStop);
-    $('obs-btn-reset').addEventListener('click', cmdReset);
-    $('obs-btn-sim').addEventListener('click', function () {
-      const on = !S.sim.on;
-      $('sim-toggle').setAttribute('aria-checked', String(on));
-      on ? simStart() : simStop();
-    });
-  }
   $('qb-all').addEventListener('click', function () { const k = eng.boostAll(20, 6); logEvent('bolt', 'Host Overboost +20%', 'Semua mobil +' + k + ' km/h selama 6 dtk', 'gift'); });
   $('qb-pack').addEventListener('click', function () { const n = eng.packTighten(); logEvent('compress', 'Rapatkan barisan', n + ' pembalap belakang dapat dorongan', 'gift'); });
   $('qb-frenzy').addEventListener('click', function () { eng.frenzy(15); logEvent('whatshot', 'Nitro Frenzy 15 detik', 'Boost gift berlipat 2×', 'gift'); });
@@ -1281,6 +1494,12 @@ function bind() {
   $('sim-count').addEventListener('input', function () { S.sim.n = +this.value; setText($('sim-count-v'), this.value); });
   $('sim-count').addEventListener('change', function () { if (S.sim.on) { simStop(); simStart(); $('sim-toggle').setAttribute('aria-checked', 'true'); } });
   $('sim-gift').addEventListener('input', function () { S.sim.giftFreq = +this.value; setText($('sim-gift-v'), this.value == 0 ? 'mati' : this.value < 4 ? 'jarang' : this.value < 8 ? 'sedang' : 'sering'); });
+  const pilihFokus = function (e) {
+    const r = e.target.closest && e.target.closest('.rk[data-no]'); if (!r) return;
+    if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault(); const no = +r.dataset.no; focusNo = focusNo === no ? 0 : no; renderSlow.sig = '';
+  };
+  $('board-list').addEventListener('click', pilihFokus); $('board-list').addEventListener('keydown', pilihFokus);
   $('btn-ws').addEventListener('click', function () { if (Konektor.want) Konektor.disconnect(); else Konektor.connect($('ws-url').value.trim()); });
   // boost
   $('btn-add-boost').addEventListener('click', function () { S.beNew = true; S.beSel = null; S.beDraft = { id: uid(), jenis_gift: '', nilai_koin: 1, tambahan_kecepatan: 30, durasi_detik: 5, efek: 'spark', aktif: 'ya' }; renderBoostTable(); renderEditor(); $('be-nama').focus(); });
@@ -1353,10 +1572,7 @@ async function pingServer() {
 // BAGIAN 13: INISIALISASI (render dari cache lokal → sinkron server)
 // ════════════════════════════════════════════════════════
 function applyBootstrap(d) {
-  if (d.config) {
-    if (+d.config.panjang_lintasan === 1000) d.config.panjang_lintasan = 5000;
-    S.config = Object.assign({}, DEFAULT_CONFIG, d.config); ls.set('tt_cfg', S.config); eng.setConfig(S.config, false);
-  }
+  if (d.config) { S.config = Object.assign({}, DEFAULT_CONFIG, d.config); ls.set('tt_cfg', S.config); eng.setConfig(S.config, false); }
   if (d.boosts && d.boosts.length) { S.boosts = d.boosts; ls.set('tt_boost', S.boosts); eng.setBoosts(S.boosts, false); }
   if (d.nomorSesi && eng.state === 'idle' && d.nomorSesi > eng.E.sesiNo) eng.E.sesiNo = d.nomorSesi;
   armSync(); connUI(); syncControls(); renderSideSession();
@@ -1364,9 +1580,7 @@ function applyBootstrap(d) {
 }
 function init() {
   setTheme(ls.get('tt_theme', 'dark'));
-  const cachedCfg = ls.get('tt_cfg', {});
-  if (+cachedCfg.panjang_lintasan === 1000) cachedCfg.panjang_lintasan = 5000;
-  S.config = Object.assign({}, DEFAULT_CONFIG, cachedCfg);
+  S.config = Object.assign({}, DEFAULT_CONFIG, ls.get('tt_cfg', {}));
   const b = ls.get('tt_boost', null); if (b && b.length) S.boosts = b;
   eng.setConfig(S.config, true); eng.setBoosts(S.boosts, true);
   const bs = ls.get('tt_boot', null); if (bs && bs.nomorSesi) eng.E.sesiNo = bs.nomorSesi;
@@ -1383,7 +1597,8 @@ function init() {
   if (S.token) outKick();
   const w = ls.get('tt_ws', null);                       // sambung otomatis jika terakhir dipakai
   if (w && w.url) $('ws-url').value = w.url;
-  if (w && w.on && w.url) setTimeout(function () { Konektor.connect(w.url); }, 600);
+  const lokal = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);   // dibuka lewat konektor → langsung sambung
+  if ((w && w.on && w.url) || (lokal && !(w && w.on === false))) setTimeout(function () { Konektor.connect((w && w.url) || ('ws://' + location.host)); }, 600);
 }
 init();
 })();
