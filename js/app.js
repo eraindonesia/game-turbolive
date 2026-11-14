@@ -15,7 +15,7 @@
 const SKALA = 6;                       // 1 m/s = 6 km/h (skala tampilan)
 const WARNA = ['#2D7DFF', '#FF4D2E', '#FFD23F', '#2EE59D', '#B57CFF', '#FF7AD9', '#4DE1FF', '#FF9F43'];
 const DEFAULT_CONFIG = {
-  tap_tiket_masuk: 100, panjang_lintasan: 1000, kecepatan_per_tap: 0.8, peluruhan: 'sedang',
+  tap_tiket_masuk: 100, panjang_lintasan: 1000, jumlah_lap: 3, kecepatan_per_tap: 0.8, peluruhan: 'sedang',
   maks_kecepatan_alami: 120, batas_kecepatan_maks: 380, jumlah_jalur: 6, tema_lintasan: 'cyber',
   mode_bergabung_terlambat: 'antrean', hitung_mundur_detik: 5, durasi_podium_detik: 20,
   gift_langsung_masuk: 'ya', interval_sync_detik: 3, auto_bersihkan_log: 'ya', terapkan_langsung: 'tidak',
@@ -40,7 +40,7 @@ function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 
 function normCfg(raw) {
   const c = Object.assign({}, DEFAULT_CONFIG, raw || {});
   return {
-    L: +c.panjang_lintasan, m: +c.kecepatan_per_tap, k: decayK(c.peluruhan),
+    L: +c.panjang_lintasan, laps: Math.max(1, Math.min(10, Math.round(+c.jumlah_lap || 3))), m: +c.kecepatan_per_tap, k: decayK(c.peluruhan),
     capNat: c.maks_kecepatan_alami / SKALA, capTot: c.batas_kecepatan_maks / SKALA, capNatKmh: +c.maks_kecepatan_alami,
     tiket: +c.tap_tiket_masuk, lanes: +c.jumlah_jalur, late: c.mode_bergabung_terlambat, cd: +c.hitung_mundur_detik,
     pod: +c.durasi_podium_detik, giftEntry: c.gift_langsung_masuk === 'ya', maxCars: +c.maks_peserta_arena, tema: c.tema_lintasan
@@ -634,7 +634,8 @@ function setObs(on) {
 //   Semua digambar di <canvas> (satu elemen DOM) → ringan untuk siaran OBS.
 //   Dunia: 1 satuan = 1 m sepanjang lintasan; lebar & tinggi dilebihkan agar terbaca di layar.
 // ════════════════════════════════════════════════════════
-const SEGL = 3, ROAD_W = 15, CAM_H = 6, CAR_UNITS = 4.3, HK = 2.2, NMAX = 160;
+let SL = 3;                              // panjang satu segmen (m); disesuaikan agar satu lap pas bulat
+const ROAD_W = 15, CAM_H = 7.6, CAR_UNITS = 4.4, HK = 2.2, NMAX = 190, FOV_WIDE = 1.0, FOV_NITRO = 0.86, CAM_BACK = 18.5;
 let LANES_V = 6;                         // diikuti dari pengaturan jumlah jalur
 const TEMA = {
   cyber:   { sky: ['#0a0630', '#2a1478', '#c43c8c'], sun: '#ffd23f', far: '#34228a', near: '#241a66', g1: '#0d3b4a', g2: '#0b3341', r1: '#2c2c42', r2: '#27273b', rum1: '#ff3d71', rum2: '#f4f4ff', lane: '#8fe3ff', haze: '#3b2390', obj: 'pine',   c1: '#2EE59D', c2: '#0f7f5c' },
@@ -644,7 +645,7 @@ const TEMA = {
 };
 const roadWrap = $('track'), roadCv = $('road'), rctx = roadCv ? roadCv.getContext('2d') : null;
 const REDUCE = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
-let course_turns = 0, RW = 800, RH = 450, DPR = 1, course = null, camZ = -18, camLat = 0, fovD = 1.15, lastRT = 0, avgDt = 0.016, peakKmh = 0, focusNo = 0;
+let lapSeen = 0, lapFlash = -9, course_turns = 0, RW = 800, RH = 450, DPR = 1, course = null, camZ = -18, camLat = 0, fovD = 1.15, lastRT = 0, avgDt = 0.016, peakKmh = 0, focusNo = 0;
 const Q = { n: 150 };
 const PX = new Float32Array(NMAX + 2), PY = new Float32Array(NMAX + 2), PW = new Float32Array(NMAX + 2), SC = new Float32Array(NMAX + 2), PZ = new Float32Array(NMAX + 2);
 const fr_ = function (x) { return x - Math.floor(x); };
@@ -653,52 +654,69 @@ const lp_ = function (a, b, t) { return a + (b - a) * t; };
 const sm_ = function (t) { return t * t * (3 - 2 * t); };
 function rng_(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
-/** Bangun lintasan: kelengkungan, bukit, arah (untuk peta mini). Deterministik per panjang. */
-function buildCourse(L) {
-  const total = Math.ceil((L + 900) / SEGL) + 4, r = rng_(20261111 + Math.round(L));
-  const curve = new Float32Array(total), hill = new Float32Array(total), heading = new Float32Array(total);
-  // 5–10 tikungan (≈1 per 125 m) tersebar merata; start & finis tetap lurus. Arah berselang-seling, maks 2 searah berturut-turut.
-  const nTurn = clamp(Math.round(L / 125), 5, 10), s0 = 22, s1 = Math.max(s0 + nTurn * 14, Math.floor((L - 130) / SEGL));
-  const slot = (s1 - s0) / nTurn;
-  let dir = r() < 0.5 ? -1 : 1, same = 0;
-  for (let j = 0; j < nTurn; j++) {
-    if (j > 0) { if (same >= 2 || r() < 0.65) { dir = -dir; same = 1; } else same++; } else same = 1;
-    const a = (0.02 + r() * 0.02) * dir, len = Math.max(10, Math.floor(slot * (0.72 + r() * 0.12))), st = Math.floor(s0 + j * slot + (slot - len) * r() * 0.6);
-    const e1 = Math.max(3, Math.round(len * 0.28)), e2 = Math.max(3, Math.round(len * 0.28));
-    for (let k = 0; k < len; k++) {
-      const idx = st + k; if (idx >= total) break;
-      curve[idx] = k < e1 ? a * sm_(k / e1) : k >= len - e2 ? a * sm_((len - 1 - k) / e2) : a;
-    }
+/** Bangun sirkuit TERTUTUP (bundar/oval bergelombang). Satu lap = L / jumlah_lap; jarak total balapan tetap L.
+ *  Bentuk dari kurva tertutup parametrik → pasti menyambung; kelengkungan per segmen diturunkan dari arah singgungnya. */
+function buildCourse(L, laps) {
+  laps = Math.max(1, laps | 0 || 1);
+  const LL = L / laps, n = Math.max(48, Math.round(LL / 3)), r = rng_(20261113 + Math.round(L) * 7 + laps);
+  SL = LL / n;
+  // kurva tertutup: elips + harmonik kecil (acak deterministik) → beberapa tikungan lebih tajam & sisi lurus
+  const rx = 1, ry = 0.74 + r() * 0.1, a3 = 0.05 + r() * 0.07, b3 = (r() - 0.5) * 0.1, c2 = (r() - 0.5) * 0.12, ph = r() * 6.283;
+  const P = function (t) { return [rx * (Math.cos(t) + a3 * Math.cos(3 * t + ph)) + c2 * Math.cos(2 * t), ry * (Math.sin(t) + b3 * Math.sin(3 * t + ph * 0.7)) + c2 * 0.6 * Math.sin(2 * t)]; };
+  const M = 2400, cum = new Float32Array(M + 1), px = new Float32Array(M + 1), py = new Float32Array(M + 1);
+  for (let k = 0; k <= M; k++) { const q = P(k / M * 6.283185307); px[k] = q[0]; py[k] = q[1]; if (k) cum[k] = cum[k - 1] + Math.hypot(px[k] - px[k - 1], py[k] - py[k - 1]); }
+  // ambil n titik sama-jarak sepanjang busur
+  const ex = new Float32Array(n + 1), ey = new Float32Array(n + 1); let j = 0;
+  for (let k = 0; k <= n; k++) {
+    const tgt = cum[M] * k / n; while (j < M - 1 && cum[j + 1] < tgt) j++;
+    const f = (tgt - cum[j]) / Math.max(1e-9, cum[j + 1] - cum[j]); ex[k] = lp_(px[j], px[j + 1], f); ey[k] = lp_(py[j], py[j + 1], f);
   }
-  course_turns = nTurn;
-  let h = 0, x = 0, y = 0, minX = 0, maxX = 0, minY = 0, maxY = 0; const pts = [];
-  for (let k = 0; k < total; k++) {
-    const z = k * SEGL, tail = clamp((z - (L - 130)) / 90, 0, 1);       // lurus & datar menjelang finis
-    curve[k] *= 1 - tail;
-    hill[k] = (5 * Math.sin(k * 0.05) + 3.2 * Math.sin(k * 0.021 + 1.7)) * Math.min(1, z / 90) * (1 - clamp((z - (L - 110)) / 80, 0, 1));
-    h += curve[k] * HK; heading[k] = h;
-    if (z <= L + SEGL) { x += Math.cos(h) * SEGL; y += Math.sin(h) * SEGL; pts.push(x, y); minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+  let hd = new Float32Array(n);                                        // arah singgung tiap segmen
+  for (let k = 0; k < n; k++) hd[k] = Math.atan2(ey[k + 1] - ey[k], ex[k + 1] - ex[k]);
+  const dh0 = new Float32Array(n);                                      // perubahan arah, dibungkus ke (-π, π]
+  for (let k = 0; k < n; k++) { let d = hd[(k + 1) % n] - hd[k]; while (d > Math.PI) d -= 6.283185307; while (d <= -Math.PI) d += 6.283185307; dh0[k] = d; }
+  let tot = 0; for (let k = 0; k < n; k++) tot += dh0[k];
+  const sgn = tot < 0 ? -1 : 1;                                         // paksa searah jarum jam (belok kanan) bila perlu
+  // haluskan sedikit agar tidak bergerigi
+  const dh = new Float32Array(n);
+  for (let k = 0; k < n; k++) dh[k] = sgn * (dh0[(k + n - 1) % n] + 2 * dh0[k] + dh0[(k + 1) % n]) / 4;
+  // geser awal ke titik paling lurus (start/finis di lintasan lurus)
+  let best = 0, bs = 1e9; for (let k = 0; k < n; k++) { let sum = 0; for (let w = -6; w <= 6; w++) sum += Math.abs(dh[(k + w + n) % n]); if (sum < bs) { bs = sum; best = k; } }
+  const curve = new Float32Array(n), hill = new Float32Array(n), heading = new Float32Array(n);
+  let h = 0, x = 0, y = 0, minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9; const pts = [];
+  const c1 = Math.max(1, Math.round(n / 125)), c2n = c1 + 1 + (n > 300 ? 1 : 0);
+  for (let k = 0; k < n; k++) {
+    curve[k] = dh[(k + best) % n] / HK;
+    hill[k] = 3.4 * Math.sin(6.283185307 * c1 * k / n) + 1.9 * Math.sin(6.283185307 * c2n * k / n + 1.7);
+    heading[k] = h; pts.push(x, y); minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    h += curve[k] * HK; x += Math.cos(h) * SL; y += Math.sin(h) * SL;
   }
-  const span = Math.max(maxX - minX, maxY - minY, 1), path = new Path2D();
-  const ox = (1 - (maxX - minX) / span) / 2, oy = (1 - (maxY - minY) / span) / 2, npt = [];
-  for (let k = 0; k < pts.length; k += 2) {
-    const nx = ox + (pts[k] - minX) / span, ny = oy + (pts[k + 1] - minY) / span; npt.push(nx, ny);
+  // tutup peta mini: seret selisih penutupan merata agar loop benar-benar menyambung
+  const ex2 = x, ey2 = y, npt = [];
+  for (let k = 0; k < n; k++) { const f = k / n; npt.push(pts[k * 2] - ex2 * f, pts[k * 2 + 1] - ey2 * f); }
+  for (let k = 0; k < npt.length; k += 2) { minX = Math.min(minX, npt[k]); maxX = Math.max(maxX, npt[k]); minY = Math.min(minY, npt[k + 1]); maxY = Math.max(maxY, npt[k + 1]); }
+  const span = Math.max(maxX - minX, maxY - minY, 1e-6), ox = (1 - (maxX - minX) / span) / 2, oy = (1 - (maxY - minY) / span) / 2, path = new Path2D(), np2 = [];
+  for (let k = 0; k < npt.length; k += 2) {
+    const nx = ox + (npt[k] - minX) / span, ny = oy + (npt[k + 1] - minY) / span; np2.push(nx, ny);
     if (k === 0) path.moveTo(nx, ny); else path.lineTo(nx, ny);
   }
-  course = { L: L, turns: nTurn, curve: curve, hill: hill, heading: heading, total: total, path: path, pts: npt };
+  path.closePath(); np2.push(np2[0], np2[1]);
+  course = { L: L, laps: laps, LL: LL, n: n, total: n, hTot: h, curve: curve, hill: hill, heading: heading, path: path, pts: np2 };
 }
-function curveAt(i) { return i < 0 ? 0 : course.curve[Math.min(i, course.total - 1)]; }
-function hillAt(i) { return i < 0 ? 0 : course.hill[Math.min(i, course.total - 1)]; }
-function groundAt(z) { const k = z / SEGL, i = Math.floor(k); return lp_(hillAt(i), hillAt(i + 1), k - i); }
-function headingAt(z) { const i = clamp(Math.floor(z / SEGL), 0, course.total - 1); return course.heading[i]; }
-function miniAt(z) {                                                    // posisi di peta mini (0..1)
-  const n = course.pts.length / 2 - 1, k = clamp(z / course.L, 0, 1) * n, i = Math.floor(k), f = k - i, a = i * 2, b = Math.min(n, i + 1) * 2;
+function wrapI(i) { const n = course.n; return ((i % n) + n) % n; }
+function curveAt(i) { return course.curve[wrapI(i)]; }
+function hillAt(i) { return course.hill[wrapI(i)]; }
+function groundAt(z) { const k = z / SL, i = Math.floor(k); return lp_(hillAt(i), hillAt(i + 1), k - i); }
+function headingAt(z) { const k = Math.floor(z / SL), lap = Math.floor(k / course.n); return lap * course.hTot + course.heading[wrapI(k)]; }
+function miniAt(z) {                                                    // posisi di peta mini (0..1), lintasan melingkar
+  const n = course.n, zz = ((z % course.LL) + course.LL) % course.LL, k = zz / course.LL * n, i = Math.floor(k), f = k - i, a = (i % n) * 2, b = ((i + 1) % (n + 1)) * 2;
   return [lp_(course.pts[a], course.pts[b], f), lp_(course.pts[a + 1], course.pts[b + 1], f)];
 }
+function lapOf(d) { return Math.max(1, Math.min(eng.cfg.laps, Math.floor(Math.max(0, d) / (eng.cfg.L / eng.cfg.laps) + 1e-9) + 1)); }
 
 function buildLanes() {                                                 // dipanggil saat konfigurasi/sesi berubah
-  setText($('stage-title'), 'Lintasan ' + nf(eng.cfg.L) + ' m');
-  course = null; camZ = -18; camLat = 0; peakKmh = 0; resizeRoad();
+  setText($('stage-title'), 'Sirkuit ' + nf(eng.cfg.L) + ' m · ' + eng.cfg.laps + ' lap');
+  course = null; camZ = -34; camLat = 0; peakKmh = 0; lapSeen = 0; lapFlash = -9; resizeRoad();
 }
 function resizeRoad() {
   if (!roadWrap || !roadCv) return;
@@ -725,36 +743,63 @@ function shade(hex, f) {
   const n = parseInt(hex.slice(1), 16), c = function (v) { return Math.max(0, Math.min(255, Math.round(v * f))); };
   return (sh_[k] = 'rgb(' + c(n >> 16) + ',' + c((n >> 8) & 255) + ',' + c(n & 255) + ')');
 }
+function poly_(ctx, X, Y, pts) { ctx.beginPath(); ctx.moveTo(X(pts[0]), Y(pts[1])); for (let k = 2; k < pts.length; k += 2) ctx.lineTo(X(pts[k]), Y(pts[k + 1])); ctx.closePath(); ctx.fill(); }
+/** Mobil balap (GT/prototype) tampak belakang: ban lebar, diffuser, sayap belakang beraksen, kanopi kaca, lampu LED, livery & nomor.
+ *  Koordinat dalam "unit" (lebar mobil = 100), y ke atas dari tanah. Detail berkurang bila mobil kecil di layar. */
 function drawCar(ctx, x, y, w, col, nitro, tSec, no, lead) {
-  const h = w * 0.56;
-  ctx.fillStyle = 'rgba(0,0,0,.34)'; ctx.beginPath(); ctx.ellipse(x, y, w * 0.6, Math.max(1.5, w * 0.08), 0, 0, 6.3); ctx.fill();
-  if (w < 9) { ctx.fillStyle = col; ctx.fillRect(x - w / 2, y - h, w, h); return; }
-  if (nitro) {                                                         // api nitro
-    const fl = 0.75 + 0.25 * Math.sin(tSec * 60 + no), L2 = h * (0.5 + 0.4 * fl);
-    [-1, 1].forEach(function (s) {
-      const fx = x + s * w * 0.27;
-      ctx.fillStyle = 'rgba(77,195,255,.9)'; ctx.beginPath(); ctx.moveTo(fx - w * 0.07, y - h * 0.1); ctx.lineTo(fx, y - h * 0.1 + L2); ctx.lineTo(fx + w * 0.07, y - h * 0.1); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(fx - w * 0.035, y - h * 0.1); ctx.lineTo(fx, y - h * 0.1 + L2 * 0.55); ctx.lineTo(fx + w * 0.035, y - h * 0.1); ctx.fill();
+  const u = w / 100, X = function (v) { return x + v * u; }, Y = function (v) { return y - v * u; };
+  ctx.fillStyle = 'rgba(0,0,0,.36)'; ctx.beginPath(); ctx.ellipse(x, y, w * 0.58, Math.max(1.5, w * 0.075), 0, 0, 6.3); ctx.fill();
+  if (w < 9) { ctx.fillStyle = col; ctx.fillRect(x - w / 2, y - w * 0.5, w, w * 0.5); return; }
+  const dark = shade(col, 0.5), mid = shade(col, 0.78), lite = shade(col, 1.18);
+  if (nitro) {                                                         // semburan nitro dari knalpot
+    const fl = 0.75 + 0.25 * Math.sin(tSec * 60 + no), L2 = w * (0.22 + 0.2 * fl);
+    [-9, 9].forEach(function (ex) {
+      const fx = X(ex), fy = Y(7);
+      ctx.fillStyle = 'rgba(77,195,255,.9)'; ctx.beginPath(); ctx.moveTo(fx - 4 * u, fy); ctx.lineTo(fx, fy + L2); ctx.lineTo(fx + 4 * u, fy); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(fx - 2 * u, fy); ctx.lineTo(fx, fy + L2 * 0.55); ctx.lineTo(fx + 2 * u, fy); ctx.fill();
     });
   }
-  ctx.fillStyle = '#07070f';                                           // roda
-  ctx.fillRect(x - w * 0.5, y - h * 0.38, w * 0.17, h * 0.38); ctx.fillRect(x + w * 0.33, y - h * 0.38, w * 0.17, h * 0.38);
-  ctx.fillStyle = col;                                                 // bodi
-  ctx.beginPath(); ctx.moveTo(x - w * 0.46, y - h * 0.08); ctx.lineTo(x + w * 0.46, y - h * 0.08); ctx.lineTo(x + w * 0.42, y - h * 0.56); ctx.lineTo(x - w * 0.42, y - h * 0.56); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.fillRect(x - w * 0.46, y - h * 0.22, w * 0.92, h * 0.14);
-  ctx.fillStyle = shade(col, 0.72);                                    // kabin
-  ctx.beginPath(); ctx.moveTo(x - w * 0.3, y - h * 0.55); ctx.lineTo(x + w * 0.3, y - h * 0.55); ctx.lineTo(x + w * 0.21, y - h * 0.92); ctx.lineTo(x - w * 0.21, y - h * 0.92); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = 'rgba(190,230,255,.88)';
-  ctx.beginPath(); ctx.moveTo(x - w * 0.25, y - h * 0.59); ctx.lineTo(x + w * 0.25, y - h * 0.59); ctx.lineTo(x + w * 0.18, y - h * 0.86); ctx.lineTo(x - w * 0.18, y - h * 0.86); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = shade(col, 0.55); ctx.fillRect(x - w * 0.42, y - h * 1.02, w * 0.84, h * 0.09);     // spoiler
-  ctx.fillRect(x - w * 0.3, y - h * 0.93, w * 0.05, h * 0.09); ctx.fillRect(x + w * 0.25, y - h * 0.93, w * 0.05, h * 0.09);
-  ctx.fillStyle = '#ff2d4d'; ctx.fillRect(x - w * 0.42, y - h * 0.46, w * 0.2, h * 0.1); ctx.fillRect(x + w * 0.22, y - h * 0.46, w * 0.2, h * 0.1);   // lampu belakang
-  if (w > 28) { ctx.fillStyle = 'rgba(255,45,77,.28)'; ctx.fillRect(x - w * 0.48, y - h * 0.52, w * 0.32, h * 0.22); ctx.fillRect(x + w * 0.16, y - h * 0.52, w * 0.32, h * 0.22); }
-  if (w > 60) {                                                        // pelat nomor
-    ctx.fillStyle = '#f4f4ff'; ctx.fillRect(x - w * 0.12, y - h * 0.34, w * 0.24, h * 0.13);
-    ctx.fillStyle = '#0e0533'; ctx.font = '800 ' + Math.round(h * 0.11) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(no), x, y - h * 0.275);
+  // ban belakang lebar + velg
+  ctx.fillStyle = '#0a0a10';
+  [[-50, -31], [31, 50]].forEach(function (t) { rrect(ctx, X(t[0]), Y(31), (t[1] - t[0]) * u, 31 * u, 3.5 * u); ctx.fill(); });
+  if (w > 22) {
+    ctx.fillStyle = '#20202b'; ctx.fillRect(X(-50), Y(31), 19 * u, 2.2 * u); ctx.fillRect(X(31), Y(31), 19 * u, 2.2 * u);
+    ctx.fillStyle = '#9aa0b8'; ctx.fillRect(X(-33.2), Y(24), 2.2 * u, 16 * u); ctx.fillRect(X(31), Y(24), 2.2 * u, 16 * u);
   }
-  if (lead) { ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = Math.max(1, w * 0.02); ctx.strokeRect(x - w * 0.47, y - h * 1.03, w * 0.94, h * 1.03); }
+  // diffuser + sirip
+  ctx.fillStyle = '#0b0b12'; poly_(ctx, X, Y, [-30, 0, 30, 0, 27, 14, -27, 14]);
+  if (w > 30) { ctx.strokeStyle = '#2b2b3a'; ctx.lineWidth = Math.max(1, u * 1.1); ctx.beginPath(); for (let k = -3; k <= 3; k++) { ctx.moveTo(X(k * 8), Y(0)); ctx.lineTo(X(k * 7), Y(14)); } ctx.stroke(); }
+  // bodi bawah (sidepod melebar) dengan gradasi
+  let fillBody = col;
+  if (w > 40) { const g = ctx.createLinearGradient(0, Y(36), 0, Y(10)); g.addColorStop(0, lite); g.addColorStop(0.55, col); g.addColorStop(1, dark); fillBody = g; }
+  ctx.fillStyle = fillBody; poly_(ctx, X, Y, [-39, 12, 39, 12, 37, 29, 28, 35, -28, 35, -37, 29]);
+  // dek belakang + kanopi
+  ctx.fillStyle = mid; poly_(ctx, X, Y, [-27, 35, 27, 35, 20, 40, -20, 40]);
+  ctx.fillStyle = '#10182c'; poly_(ctx, X, Y, [-17, 40, 17, 40, 12.5, 53, -12.5, 53]);
+  if (w > 26) { ctx.fillStyle = 'rgba(160,200,255,.32)'; poly_(ctx, X, Y, [-14, 41, -6, 41, -3, 52, -10.5, 52]); }
+  ctx.fillStyle = shade(col, 0.66); poly_(ctx, X, Y, [-12.5, 53, 12.5, 53, 10, 57, -10, 57]);       // atap
+  // sayap belakang: pylon, bidang utama, endplate
+  ctx.fillStyle = '#14141d'; ctx.fillRect(X(-20), Y(41), 2.6 * u, 8 * u); ctx.fillRect(X(17.4), Y(41), 2.6 * u, 8 * u);
+  ctx.fillStyle = '#0d0d15'; ctx.fillRect(X(-46), Y(50), 92 * u, 7 * u);
+  ctx.fillStyle = lite; ctx.fillRect(X(-46), Y(50), 92 * u, 1.6 * u);
+  ctx.fillStyle = dark; ctx.fillRect(X(-48), Y(53), 3 * u, 22 * u); ctx.fillRect(X(45), Y(53), 3 * u, 22 * u);
+  ctx.fillStyle = lite; ctx.fillRect(X(-48), Y(53), 3 * u, 3 * u); ctx.fillRect(X(45), Y(53), 3 * u, 3 * u);
+  // lampu belakang LED + lampu hujan
+  ctx.fillStyle = '#ff2d4d'; ctx.fillRect(X(-33), Y(21), 66 * u, 4 * u);
+  ctx.fillStyle = '#ffd6dc'; ctx.fillRect(X(-9), Y(21), 18 * u, 4 * u);
+  if (w > 30) { ctx.fillStyle = '#ff2d4d'; ctx.fillRect(X(-37), Y(27), 9 * u, 5 * u); ctx.fillRect(X(28), Y(27), 9 * u, 5 * u); ctx.fillStyle = 'rgba(255,45,77,.3)'; ctx.fillRect(X(-40), Y(33), 15 * u, 11 * u); ctx.fillRect(X(25), Y(33), 15 * u, 11 * u); }
+  // knalpot
+  if (w > 26) { ctx.fillStyle = '#23232c'; ctx.strokeStyle = '#a8aec4'; ctx.lineWidth = Math.max(1, u * 0.9); [-9, 9].forEach(function (ex) { ctx.beginPath(); ctx.arc(X(ex), Y(8), 3.4 * u, 0, 6.3); ctx.fill(); ctx.stroke(); }); }
+  // livery: strip tengah putih, aksen kuning, roundel nomor
+  if (w > 36) {
+    ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.fillRect(X(-3.2), Y(35), 6.4 * u, 14 * u); ctx.fillRect(X(-2.6), Y(57), 5.2 * u, 3.5 * u);
+    ctx.fillStyle = '#ffd23f'; ctx.fillRect(X(-39), Y(18), 78 * u, 1.6 * u);
+  }
+  if (w > 62) {
+    ctx.fillStyle = '#f6f6ff'; ctx.beginPath(); ctx.arc(X(0), Y(31), 6.6 * u, 0, 6.3); ctx.fill();
+    ctx.fillStyle = '#0e0533'; ctx.font = '800 ' + Math.max(8, Math.round(8.2 * u)) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(no), X(0), Y(31) + 0.5);
+  }
+  if (lead) { ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = Math.max(1, w * 0.02); ctx.strokeRect(x - w * 0.53, y - w * 0.61, w * 1.06, w * 0.61); }
 }
 function drawObj(ctx, th, x, y, h, v) {                                // objek tepi jalan per tema
   if (h < 3) return;
@@ -813,7 +858,7 @@ function renderFrame(ms) {
   if (!rctx) return;
   const dt = clamp((ms - lastRT) / 1000, 0.001, 0.1); lastRT = ms; adaptQuality(dt);
   const E = eng.E, cfg = eng.cfg, rank = eng.ranking(), ctx = rctx, tSec = ms / 1000;
-  if (!course || course.L !== cfg.L) buildCourse(cfg.L);
+  if (!course || course.L !== cfg.L || course.laps !== cfg.laps) buildCourse(cfg.L, cfg.laps);
   LANES_V = clamp(+cfg.lanes || 6, 3, 8);
   const th = TEMA[cfg.tema] || TEMA.cyber, W = RW, H = RH, hz = H * 0.42, N = Q.n;
   if (E.state === 'idle' && !rank.length) peakKmh = 0;
@@ -822,14 +867,17 @@ function renderFrame(ms) {
   let focus = focusNo ? rank.find(function (c) { return c.no === focusNo; }) : null;
   if (!focus) { focusNo = 0; focus = rank[0] || null; }
   const fz = focus ? worldZ(focus, E, cfg) : 0;
-  let back = 13;
-  if (focus && focus === rank[0] && rank.length > 1) { const k = Math.min(rank.length, 6); back += Math.min(8, (rank[0].d - rank[k - 1].d) * 0.1); }
-  const target = clamp(fz - back, -18, cfg.L - 24);       // kamera berhenti sebelum garis finis → gerbang tetap terlihat
+  let back = CAM_BACK;
+  if (focus && focus === rank[0] && rank.length > 1) { const k = Math.min(rank.length, 6); back += Math.min(12, (rank[0].d - rank[k - 1].d) * 0.1); }
+  const target = clamp(fz - back, -34, cfg.L - 34);       // kamera berhenti sebelum garis finis → gerbang tetap terlihat
   if (Math.abs(target - camZ) > 160) camZ = target;
   else { if (focus && !focus.done) camZ += focus.vel * dt; camZ += (target - camZ) * (1 - Math.exp(-dt * 5)); }   // + prediksi kecepatan: kamera tidak tertinggal
   camLat += ((focus ? latOf(focus, tSec) * 0.55 : 0) - camLat) * (1 - Math.exp(-dt * 4));
   const fNitro = !!(focus && focus.nitros.length);
-  fovD += ((fNitro ? 0.98 : 1.15) - fovD) * (1 - Math.exp(-dt * 6));
+  const fLap = focus ? lapOf(focus.d) : 0;
+  if (E.state === 'idle' || E.state === 'countdown') lapSeen = 0;
+  if (focus && E.state === 'running') { if (fLap > lapSeen) { if (lapSeen > 0) lapFlash = tSec; lapSeen = fLap; } }
+  fovD += ((fNitro ? FOV_NITRO : FOV_WIDE) - fovD) * (1 - Math.exp(-dt * 6));
   const camX = camLat * ROAD_W, camY = CAM_H + groundAt(camZ);
   const shake = (fNitro && !REDUCE) ? (Math.random() - 0.5) * 2.2 : 0;
 
@@ -839,10 +887,10 @@ function renderFrame(ms) {
   ctx.fillStyle = th.g1; ctx.fillRect(0, hz, W, H - hz + 4);
 
   // ── Proyeksi segmen (dekat → jauh) ──
-  const base = Math.floor(camZ / SEGL), pct = (camZ - base * SEGL) / SEGL, hw = W / 2;
+  const laps_ = cfg.laps, base = Math.floor(camZ / SL), pct = (camZ - base * SL) / SL, hw = W / 2;
   let x = 0, dx = -curveAt(base) * pct, n0 = 0;
   for (let n = 0; n <= N; n++) {
-    const i = base + n, pz = i * SEGL - camZ, sc = fovD / Math.max(pz, 0.01);
+    const i = base + n, pz = i * SL - camZ, sc = fovD / Math.max(pz, 0.01);
     PZ[n] = pz; SC[n] = sc; PX[n] = hw + sc * (x - camX) * hw; PY[n] = hz - sc * (hillAt(i) - camY) * hw; PW[n] = sc * ROAD_W * hw;
     if (pz < 0.6) n0 = n + 1;
     x += dx; dx += curveAt(i);
@@ -851,42 +899,43 @@ function renderFrame(ms) {
   // ── Kelompokkan mobil per segmen ──
   const buckets = new Array(N + 1);
   for (let k = 0; k < rank.length; k++) {
-    const c = rank[k], z = worldZ(c, E, cfg), n = Math.floor(z / SEGL) - base;
+    const c = rank[k], z = worldZ(c, E, cfg), n = Math.floor(z / SL) - base;
     if (n < n0 || n >= N) continue;
     (buckets[n] || (buckets[n] = [])).push({ c: c, z: z, i: k });
   }
-  const tags = [], startSeg = Math.floor(0 / SEGL) - base, finSeg = Math.floor(cfg.L / SEGL) - base;
+  const tags = [], finSeg = Math.round(cfg.L / SL) - base, nLap = course.n;
 
   // ── Gambar jauh → dekat (algoritma pelukis) ──
   for (let n = N - 1; n >= n0; n--) {
     const i = base + n, y1 = PY[n], y2 = PY[n + 1];
     if (y1 <= y2) continue;                                            // sisi belakang bukit
-    const alt = (Math.floor(i / 3)) & 1, x1 = PX[n], x2 = PX[n + 1], w1 = PW[n], w2 = PW[n + 1];
+    const alt = (Math.floor(wrapI(i) / 3)) & 1, x1 = PX[n], x2 = PX[n + 1], w1 = PW[n], w2 = PW[n + 1];
     ctx.fillStyle = alt ? th.g1 : th.g2; ctx.fillRect(0, y2 - 0.5, W, y1 - y2 + 1.5);
     ctx.fillStyle = alt ? th.rum1 : th.rum2; quad(ctx, x1, y1 + 0.5, w1 * 1.13, x2, y2, w2 * 1.13);
     ctx.fillStyle = alt ? th.r1 : th.r2; quad(ctx, x1, y1 + 0.5, w1, x2, y2, w2);
-    if ((i % 6 + 6) % 6 < 3) { ctx.fillStyle = th.lane; ctx.globalAlpha = 0.75; quad(ctx, x1, y1, w1 * 0.018, x2, y2, w2 * 0.018); ctx.globalAlpha = 1; }
-    if (n === startSeg || n === finSeg) { ctx.fillStyle = '#f4f4ff'; checker(ctx, x1, y1, w1, x2, y2, w2); }
+    if (wrapI(i) % 6 < 3) { ctx.fillStyle = th.lane; ctx.globalAlpha = 0.75; quad(ctx, x1, y1, w1 * 0.018, x2, y2, w2 * 0.018); ctx.globalAlpha = 1; }
+    const iw = wrapI(i), isLapLine = iw === 0 && i >= 0 && i < laps_ * nLap && i !== laps_ * nLap;
+    if (isLapLine || n === finSeg) { ctx.fillStyle = '#f4f4ff'; checker(ctx, x1, y1, w1, x2, y2, w2); }
     // objek tepi jalan
-    if (i > 2 && i % 4 === 0 && i * SEGL < cfg.L + 400) {
-      const sc = SC[n], hh = (9 + hsh_(i) * 6) * sc * hw;
-      drawObj(ctx, th, x1 - (ROAD_W + 5 + hsh_(i + 7) * 15) * sc * hw, y1, hh, hsh_(i + 3));
-      drawObj(ctx, th, x1 + (ROAD_W + 5 + hsh_(i + 11) * 15) * sc * hw, y1, hh, hsh_(i + 5));
+    if (iw % 4 === 0 && iw > 1 && iw < nLap - 1) {
+      const sc = SC[n], hh = (9 + hsh_(iw) * 6) * sc * hw;
+      drawObj(ctx, th, x1 - (ROAD_W + 5 + hsh_(iw + 7) * 15) * sc * hw, y1, hh, hsh_(iw + 3));
+      drawObj(ctx, th, x1 + (ROAD_W + 5 + hsh_(iw + 11) * 15) * sc * hw, y1, hh, hsh_(iw + 5));
     }
-    // gerbang finis
-    if (n === finSeg) {
+    // gerbang garis start/finis (tiap lap) + gerbang FINISH di garis akhir
+    if (n === finSeg || isLapLine) {
       const sc = SC[n], gh = 11 * sc * hw, gx1 = x1 - w1 * 1.18, gx2 = x1 + w1 * 1.18;
       ctx.fillStyle = '#e8e8f5'; ctx.fillRect(gx1 - gh * 0.05, y1 - gh, gh * 0.1, gh); ctx.fillRect(gx2 - gh * 0.05, y1 - gh, gh * 0.1, gh);
       const bw = gx2 - gx1, bh = gh * 0.28, bs = Math.max(2, bh / 2);
       for (let r = 0; r < 2; r++) for (let c = 0, cn = Math.max(6, Math.round(bw / bs)); c < cn; c++) { ctx.fillStyle = ((r + c) & 1) ? '#0b0b14' : '#f4f4ff'; ctx.fillRect(gx1 + c * bw / cn, y1 - gh - bh + r * bh / 2, bw / cn + 0.5, bh / 2 + 0.5); }
-      if (bh > 14) { ctx.fillStyle = '#ffd23f'; ctx.font = '800 ' + Math.round(bh * 0.5) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('FINISH', x1, y1 - gh - bh * 1.8); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; }
+      if (bh > 14) { ctx.fillStyle = '#ffd23f'; ctx.font = '800 ' + Math.round(bh * 0.5) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(n === finSeg ? 'FINISH' : i <= 0 ? 'START' : 'LAP ' + (Math.round(i / nLap) + 1) + '/' + laps_, x1, y1 - gh - bh * 1.8); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; }
     }
     // mobil pada segmen ini
     const bk = buckets[n];
     if (bk) {
       bk.sort(function (a, b) { return b.z - a.z; });
       for (let q = 0; q < bk.length; q++) {
-        const o = bk[q], t = (o.z - i * SEGL) / SEGL, sc = lp_(SC[n], SC[n + 1], t);
+        const o = bk[q], t = (o.z - i * SL) / SL, sc = lp_(SC[n], SC[n + 1], t);
         const cx = lp_(x1, x2, t) + latOf(o.c, tSec) * ROAD_W * sc * hw, cy = lp_(y1, y2, t), cw = CAR_UNITS * sc * hw;
         drawCar(ctx, cx, cy, cw, WARNA[o.c.v.color], o.c.nitros.length > 0, tSec, o.c.no, o.i === 0 && E.state !== 'idle');
         if (cw > 26) tags.push({ x: cx, y: cy - cw * 0.6 - 4, w: cw, c: o.c, lead: o.i === 0, f: o.c === focus });
@@ -930,7 +979,7 @@ function drawHud(ctx, E, cfg, rank, focus, kmh, W, H, tSec) {
   const bw = 168 * u, bh = 52 * u, lead = rank[0], prog = clamp((lead ? lead.d : 0) / cfg.L, 0, 1);
   ctx.fillStyle = 'rgba(8,6,32,.66)'; rrect(ctx, pad, pad, bw, bh, 10 * u); ctx.fill();
   ctx.fillStyle = '#fff'; ctx.font = F(22, 800); ctx.fillText(fmtTime(E.t), pad + 10 * u, pad + 25 * u);
-  ctx.fillStyle = '#9fb4ff'; ctx.font = F(10, 700); ctx.fillText('JARAK ' + Math.round(lead ? lead.d : 0) + ' / ' + nf(cfg.L) + ' M', pad + 10 * u, pad + 39 * u);
+  ctx.fillStyle = '#9fb4ff'; ctx.font = F(10, 700); ctx.fillText('LAP ' + lapOf(lead ? lead.d : 0) + '/' + cfg.laps + ' · ' + Math.round(lead ? lead.d : 0) + ' / ' + nf(cfg.L) + ' M', pad + 10 * u, pad + 39 * u);
   ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fillRect(pad + 10 * u, pad + 44 * u, bw - 20 * u, 3 * u);
   ctx.fillStyle = '#ffd23f'; ctx.fillRect(pad + 10 * u, pad + 44 * u, (bw - 20 * u) * prog, 3 * u);
   // Papan peringkat (kiri)
@@ -957,7 +1006,7 @@ function drawHud(ctx, E, cfg, rank, focus, kmh, W, H, tSec) {
   ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(255,255,255,.2)'; ctx.lineWidth = 9 / inner * u; ctx.stroke(course.path);
   ctx.strokeStyle = '#7f8cc0'; ctx.lineWidth = 4.5 / inner * u; ctx.stroke(course.path); ctx.restore();
   const dot = function (z, col, r) { const p = miniAt(z); ctx.fillStyle = col; ctx.beginPath(); ctx.arc(mx0 + 11 * u + p[0] * inner, my0 + 11 * u + p[1] * inner, r * u, 0, 6.3); ctx.fill(); };
-  dot(cfg.L, '#f4f4ff', 4); dot(0, '#2EE59D', 3.5);
+  dot(0, '#f4f4ff', 4.2); ctx.strokeStyle = '#2EE59D'; ctx.lineWidth = 1.6 * u; ctx.beginPath(); ctx.arc(mx0 + 11 * u + miniAt(0)[0] * inner, my0 + 11 * u + miniAt(0)[1] * inner, 6 * u, 0, 6.3); ctx.stroke();
   for (let k = Math.min(rank.length, 40) - 1; k >= 0; k--) { const c = rank[k]; if (c !== focus) dot(c.d, WARNA[c.v.color], k === 0 ? 3.6 : 2.4); }
   if (focus) dot(focus.d, '#ffffff', 4.6);
   // Speedometer + posisi (kanan bawah)
@@ -981,6 +1030,14 @@ function drawHud(ctx, E, cfg, rank, focus, kmh, W, H, tSec) {
     ctx.textAlign = 'left'; ctx.font = F(10, 700); const t = 'SOROTAN: @' + focus.v.u + ' · klik lagi di papan untuk kembali ke juara 1', tw = ctx.measureText(t).width + 18 * u;
     ctx.fillStyle = 'rgba(45,125,255,.85)'; rrect(ctx, pad, H - pad - 22 * u, Math.min(tw, W * 0.6), 22 * u, 11 * u); ctx.fill();
     ctx.fillStyle = '#fff'; ctx.fillText(t.length > 60 && W < 700 ? 'SOROTAN: @' + focus.v.u : t, pad + 9 * u, H - pad - 7 * u);
+  }
+  // Banner lap baru (±2 dtk)
+  const lt = tSec - lapFlash;
+  if (lt >= 0 && lt < 2.2 && lapSeen > 0) {
+    const al = lt < 0.25 ? lt / 0.25 : lt > 1.7 ? (2.2 - lt) / 0.5 : 1, txt = lapSeen >= cfg.laps ? 'LAP TERAKHIR!' : 'LAP ' + lapSeen + ' / ' + cfg.laps;
+    ctx.globalAlpha = clamp(al, 0, 1); ctx.font = F(26, 800); const tw = ctx.measureText(txt).width + 44 * u, bx = W / 2 - tw / 2, by = H * 0.14;
+    ctx.fillStyle = lapSeen >= cfg.laps ? 'rgba(255,77,46,.92)' : 'rgba(45,125,255,.92)'; rrect(ctx, bx, by, tw, 44 * u, 22 * u); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.fillText(txt, W / 2, by + 30 * u); ctx.textAlign = 'left'; ctx.globalAlpha = 1;
   }
   ctx.textAlign = 'left';
 }
@@ -1246,7 +1303,7 @@ function applyPreset(f, label) {
 // BAGIAN 8: PENGATURAN GAME (kontrol generik via data-cfg)
 // ════════════════════════════════════════════════════════
 const RULES = {
-  tap_tiket_masuk: { t: 'int', min: 1, max: 5000 }, panjang_lintasan: { t: 'int', min: 200, max: 10000 }, kecepatan_per_tap: { t: 'num', min: 0.1, max: 5 },
+  tap_tiket_masuk: { t: 'int', min: 1, max: 5000 }, panjang_lintasan: { t: 'int', min: 200, max: 10000 }, jumlah_lap: { t: 'int', min: 1, max: 10 }, kecepatan_per_tap: { t: 'num', min: 0.1, max: 5 },
   maks_kecepatan_alami: { t: 'int', min: 30, max: 400 }, batas_kecepatan_maks: { t: 'int', min: 60, max: 1000 }, hitung_mundur_detik: { t: 'int', min: 3, max: 30 },
   durasi_podium_detik: { t: 'int', min: 5, max: 120 }, interval_sync_detik: { t: 'int', min: 2, max: 30 }, maks_peserta_arena: { t: 'int', min: 10, max: 1000 }
 };

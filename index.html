@@ -314,6 +314,7 @@
             <div class="card-head"><div class="card-title"><span class="ico-box y"><span class="ms">flag_circle</span></span><div><div class="h-sm">Lintasan &amp; Visual Arena</div><div class="caps-xs muted">Panjang &amp; tata letak</div></div></div><span class="pill b">Kanvas 1080p</span></div>
             <div class="col gap16">
               <div class="field"><div class="row between"><label for="c-len">Panjang lintasan</label><b class="num"><span data-out="panjang_lintasan">1000</span> <span class="muted">meter</span></b></div><input class="input num" id="c-len" type="number" min="200" max="10000" step="50" data-cfg="panjang_lintasan"><span class="err" data-err="panjang_lintasan"></span><span class="help t-secondary" id="est-dur">—</span></div>
+              <div class="field"><div class="row between"><label for="c-lap">Jumlah lap (sirkuit bundar)</label><b class="num"><span data-out="jumlah_lap">3</span> <span class="muted">lap</span></b></div><input class="input num" id="c-lap" type="number" min="1" max="10" step="1" data-cfg="jumlah_lap"><span class="err" data-err="jumlah_lap"></span><span class="help">Total jarak tetap sama; tiap lap = panjang lintasan ÷ jumlah lap.</span></div>
               <div class="field"><label>Jumlah jalur tampil</label><div class="seg full" data-cfg="jumlah_jalur" data-type="seg" data-num="1"><button data-v="4" aria-pressed="false">4</button><button data-v="6" aria-pressed="false">6</button><button data-v="8" aria-pressed="false">8</button><button data-v="12" aria-pressed="false">12</button></div><span class="help">Jalur menampilkan pembalap terdepan; sisanya muncul di peta mini.</span></div>
               <div class="field"><label for="c-tema">Tema lintasan</label><select class="select" id="c-tema" data-cfg="tema_lintasan"><option value="cyber">Cyber Neon City (ungu malam)</option><option value="desert">Desert Mirage (debu oranye)</option><option value="rainbow">Rainbow Highway (arcade 90-an)</option><option value="circuit">Midnight Circuit (hijau neon)</option></select></div>
               <div class="field"><label for="c-peserta">Batas mobil aktif di arena</label><input class="input num" id="c-peserta" type="number" min="10" max="1000" data-cfg="maks_peserta_arena"><span class="err" data-err="maks_peserta_arena"></span></div>
@@ -427,7 +428,7 @@
     <div class="row gap8" style="justify-content:flex-end"><button class="btn btn-ghost" id="confirm-cancel">Batal</button><button class="btn btn-nitro" id="confirm-ok">Ya, lanjutkan</button></div></div>
 </div>
 <div id="toasts" role="status" aria-live="polite"></div>
-<div id="obs-hint">Mode Siaran aktif · tekan Esc atau klik pojok kiri atas untuk keluar</div>
+<div id="obs-hint">Mode Siaran aktif · gerakkan mouse untuk menampilkan kontrol · Esc untuk keluar</div>
 <button id="obs-exit" aria-label="Keluar mode siaran"></button>
 <div id="obs-dock" role="toolbar" aria-label="Kontrol balapan (Mode Siaran)">
   <span class="dock-st"><span class="led" id="dock-led"></span><b id="dock-state">—</b><span class="dock-sep"></span><span class="num" id="dock-cars">0</span><span class="ms" style="font-size:16px">directions_car</span></span>
